@@ -127,6 +127,12 @@ interface SchemaDiagramProps {
   onExportSql?: () => void;
   /** Extra toolbar controls rendered in the top-right panel. */
   toolbarExtras?: ReactNode;
+  /** Virtual (business-convention) relations from the Entity Explorer —
+   * rendered as amber dashed edges alongside declared FK edges. */
+  virtualRelations?: Array<{
+    source: { schema: string; table: string; column: string };
+    target: { schema: string; table: string; column: string };
+  }> | null;
 }
 
 // Custom Node Component for Tables
@@ -344,6 +350,7 @@ export function SchemaDiagram({
   onSave,
   onExportSql,
   toolbarExtras,
+  virtualRelations,
 }: SchemaDiagramProps) {
   const { theme, systemTheme } = useTheme();
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<Node<TableData>>([]);
@@ -563,6 +570,44 @@ export function SchemaDiagram({
         });
       });
 
+      // Virtual (business-convention) relations — amber edges, only within
+      // the selected schema, mirroring the declared-FK behaviour above.
+      const tableNamesInSchema = new Set(filteredTables.map((t) => t.name));
+      const virtualEdgeColor = "#f59e0b";
+      (virtualRelations || []).forEach((rel, idx) => {
+        if (
+          rel.source.schema !== selectedSchema ||
+          rel.target.schema !== selectedSchema
+        ) {
+          return;
+        }
+        if (!tableNamesInSchema.has(rel.source.table) || !tableNamesInSchema.has(rel.target.table)) {
+          return;
+        }
+        newEdges.push({
+          id: `ev-${rel.source.table}-${rel.source.column}-${rel.target.table}-${rel.target.column}-${idx}`,
+          source: rel.source.table,
+          target: rel.target.table,
+          sourceHandle: `${rel.source.column}-source`,
+          targetHandle: `${rel.target.column}-target`,
+          animated: false,
+          type: "smoothstep",
+          style: {
+            stroke: virtualEdgeColor,
+            strokeWidth: 1.5,
+            strokeDasharray: "2,4",
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 12,
+            height: 12,
+            color: virtualEdgeColor,
+          },
+          selectable: isEditable,
+          focusable: isEditable,
+        });
+      });
+
       if (token !== layoutTokenRef.current) return;
       console.log("[schema-layout] done", {
         token,
@@ -620,6 +665,7 @@ export function SchemaDiagram({
     layoutMode,
     isEditable,
     allowConnect,
+    virtualRelations,
   ]);
 
   useEffect(() => {

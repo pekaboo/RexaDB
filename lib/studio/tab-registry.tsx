@@ -5,6 +5,7 @@ import { ConnectionAnalytics } from "@/components/connections/connection-analyti
 import { AdvisorView } from "@/components/advisor/advisor-view";
 import { WorkflowView } from "@/components/workflows/workflow-view";
 import { ErdDesignerView } from "@/components/studio/erd/erd-designer-view";
+import { EntityExplorerView } from "@/components/studio/explorer/entity-explorer-view";
 import type { ConnectionDbType } from "@/lib/db/connection-type";
 import { ProfileSettingsView } from "@/components/studio/profile-settings-view";
 import { ConnectStudioView } from "@/components/studio/connect-studio-view";
@@ -212,6 +213,7 @@ export const TAB_REGISTRY: {
   "edge-secrets": TabTypeConfig;
   "edge-function": TabTypeConfig;
   browser: TabTypeConfig;
+  "entity-explorer": TabTypeConfig;
   settings: TabTypeConfig;
   "agent-settings": TabTypeConfig;
   "profile-settings": TabTypeConfig;
@@ -660,6 +662,15 @@ export const TAB_REGISTRY: {
   },
 
   // ── special ────────────────────────────────────────────────────────────
+  "entity-explorer": {
+    ...simpleConfig("entity-explorer", "entity-explorer", "Entity Explorer", "scan-search", "special"),
+    renderComponent: (opts) => (
+      <EntityExplorerView
+        connectionString={opts.context?.connectionString as string}
+        dbType={opts.context?.dbType as string | undefined}
+      />
+    ),
+  },
   "import-export": {
     ...simpleConfig("import-export", "import-export", "Export", "download", "special"),
     renderComponent: (opts) => <ImportExportView studio={opts.studio as any} />,

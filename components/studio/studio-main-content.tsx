@@ -4,6 +4,7 @@ import { WelcomeScreen } from "./welcome-screen";
 import { SqlEditor } from "./sql-editor";
 import { TableEditorView } from "./table-editor-view";
 import { SchemaDiagram } from "./database/schema-diagram";
+import { useVirtualRelations } from "./explorer/use-virtual-relations";
 import { TablesList } from "./database/tables-list";
 import { FunctionsList } from "./database/functions-list";
 import { ExtensionsList } from "./database/extensions-list";
@@ -94,6 +95,18 @@ import type { RedisKeyInfo } from "@/types/redis";
 interface DropIndicator {
   position: DropPosition;
   paneId: StudioPaneId;
+}
+
+/** SchemaDiagram + virtual (business-convention) relations as amber edges.
+ *  Thin wrapper so the fetch hook runs only when the diagram is mounted. */
+function SchemaDiagramWithVirtualRelations({
+  currentConnectionString,
+  ...props
+}: React.ComponentProps<typeof SchemaDiagram> & { currentConnectionString?: string | null }) {
+  const virtualRelations = useVirtualRelations(
+    props.dbType === "postgres" ? currentConnectionString : null,
+  );
+  return <SchemaDiagram {...props} virtualRelations={virtualRelations} />;
 }
 
 function quoteColumn(rawColumn: string, dbType: string): string {
@@ -1270,7 +1283,7 @@ export function StudioMainContent({
                 ? registryRenderComponent
                 : paneViewMode === "database" ? (
                 paneDatabaseView === "schema" ? (
-                  <SchemaDiagram
+                  <SchemaDiagramWithVirtualRelations
                     schemaData={schemaData}
                     selectedSchema={selectedSchema}
                     schemas={schemas}
@@ -1281,6 +1294,7 @@ export function StudioMainContent({
                     setNewFKData={studio.setNewFKData}
                     onOpenTable={handleTableClick}
                     highlightedTable={studio.schemaHighlightedTable}
+                    currentConnectionString={currentConnectionString}
                   />
                 ) : paneDatabaseView === "tables" ? (
                   studio.dbType === "redis" ? (

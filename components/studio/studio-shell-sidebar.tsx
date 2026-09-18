@@ -1587,6 +1587,7 @@ function DatabasePanel({ studio }: { studio: any }) {
   const routineCatalog = pgCatalog || dbType === "mssql";
   const items: Array<{ label: string; view: string; tabType: string; show?: boolean }> = [
     { label: "Schema Diagram", view: "schema", tabType: "database-schema" },
+    { label: "Entity Explorer", view: "entity-explorer", tabType: "entity-explorer", show: pgCatalog },
     {
       label: dbType === "mongodb" ? "Collections" : "Tables",
       view: "tables",
@@ -1603,11 +1604,26 @@ function DatabasePanel({ studio }: { studio: any }) {
         .filter((i) => i.show !== false)
         .map((i) => {
           const Icon = getTabIcon(i.tabType) ?? DbIcon;
+          const handleClick = () => {
+            if (i.tabType === "entity-explorer") {
+              const tabId = "entity-explorer";
+              const existing = (studio.openTabs || []).find((t: any) => t.id === tabId);
+              if (existing) {
+                studio.switchTab(tabId);
+                return;
+              }
+              const next = [...(studio.openTabs || []), { id: tabId, type: "entity-explorer" as const, name: "Entity Explorer" }];
+              studio.setOpenTabs(next);
+              studio.switchTab(tabId, next);
+              return;
+            }
+            studio.openDatabaseTab?.(i.view);
+          };
           return (
             <button
               key={i.view}
               type="button"
-              onClick={() => studio.openDatabaseTab?.(i.view)}
+              onClick={handleClick}
               className={cn(
                 ROW,
                 studio.databaseView === i.view && "bg-white/10 text-foreground",
