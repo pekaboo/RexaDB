@@ -55,6 +55,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/components/providers/theme-provider";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { ConnectionDbType } from "@/lib/db/connection-type";
@@ -127,6 +128,9 @@ interface SchemaDiagramProps {
   onExportSql?: () => void;
   /** Extra toolbar controls rendered in the top-right panel. */
   toolbarExtras?: ReactNode;
+  /** Persistence key for the per-schema focus-table selection (e.g. hashed
+   * connection string). When provided, the selection survives reloads. */
+  focusKey?: string;
   /** Virtual (business-convention) relations from the Entity Explorer —
    * rendered as amber dashed edges alongside declared FK edges. */
   virtualRelations?: Array<{
@@ -386,6 +390,7 @@ export function SchemaDiagram({
   onSave,
   onExportSql,
   toolbarExtras,
+  focusKey,
   virtualRelations,
 }: SchemaDiagramProps) {
   const { theme, systemTheme } = useTheme();
@@ -394,6 +399,9 @@ export function SchemaDiagram({
   const [copied, setCopied] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"grid" | "auto">("auto");
+  // Focus tables per schema: when a schema has entries, the diagram shows
+  // ONLY those tables (plus edges between them). Empty/missing = show all.
+  const [focusBySchema, setFocusBySchema] = useState<Record<string, string[]>>({});
   const dragSourceRef = useRef<{ table: string; column: string } | null>(null);
   const connectHandledRef = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -412,6 +420,11 @@ export function SchemaDiagram({
   >(new Map());
   const positionsRef = useRef(positions);
   positionsRef.current = positions;
+  // Latest virtual relations via ref: the layout effect must NOT depend on
+  // them (the 15s poll would trigger a full dagre re-layout). A dedicated
+  // lightweight effect swaps edges only.
+  const virtualRelationsRef = useRef(virtualRelations);
+  virtualRelationsRef.current = virtualRelations;
   const isEditable = mode === "editable";
   const allowConnect =
     isEditable || dbType === "postgres" || dbType === "supabase-mgmt";
@@ -456,23 +469,20 @@ export function SchemaDiagram({
 
   const filteredTables = useMemo(() => {
     if (!schemaData) return [] as TableData[];
-    const schemasInData = Array.from(
-      new Set(Object.values(schemaData).map((t: any) => t.schema)),
-    );
-    console.log(
-      "[diagram-filter] selectedSchema:",
-      selectedSchema,
-      "schemasInData:",
-      schemasInData,
-      "match:",
-      schemasInData.some(
-        (s) => s.toLowerCase() === selectedSchema.toLowerCase(),
-      ),
-    );
-    return Object.values(schemaData).filter(
+    const schemaTables = Object.values(schemaData).filter(
       (t: any) => t.schema.toLowerCase() === selectedSchema.toLowerCase(),
     );
-  }, [schemaData, selectedSchema]);
+    // Apply the focus-table selection for this schema. If none of the
+    // selected tables exist here (e.g. after switching schemas or a
+    // rename), fall back to showing everything rather than a blank canvas.
+    const focusList = focusBySchema[selectedSchema];
+    if (focusList && focusList.length > 0) {
+      const focusSet = new Set(focusList);
+      const intersect = schemaTables.filter((t: any) => focusSet.has(t.name));
+      if (intersect.length > 0) return intersect;
+    }
+    return schemaTables;
+  }, [schemaData, selectedSchema, focusBySchema]);
 
   const sortedTables = useMemo(
     () => [...filteredTables].sort((a, b) => a.name.localeCompare(b.name)),
@@ -482,6 +492,29 @@ export function SchemaDiagram({
   useEffect(() => {
     measuredSizesRef.current.clear();
   }, [selectedSchema]);
+
+  // ─── Focus-table selection persistence (per connection, per schema) ──
+  useEffect(() => {
+    if (!focusKey || typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(`rexa-schema-focus:${focusKey}`);
+      if (raw) setFocusBySchema(JSON.parse(raw));
+    } catch {
+      // malformed storage — start fresh
+    }
+  }, [focusKey]);
+
+  useEffect(() => {
+    if (!focusKey || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        `rexa-schema-focus:${focusKey}`,
+        JSON.stringify(focusBySchema),
+      );
+    } catch {
+      // storage unavailable — selection just won't persist
+    }
+  }, [focusKey, focusBySchema]);
 
   useEffect(() => {
     if (!copied) return;
@@ -577,9 +610,17 @@ export function SchemaDiagram({
       }
 
       const newEdges: Edge[] = [];
+      // Edges are only drawn when BOTH endpoints are visible — with a
+      // focus-table selection, FK edges into hidden tables are dropped so
+      // React Flow never sees dangling edge endpoints.
+      const visibleTableNames = new Set(filteredTables.map((t) => t.name));
       filteredTables.forEach((table) => {
         table.columns.forEach((col) => {
-          if (col.references && col.references.schema === selectedSchema) {
+          if (
+            col.references &&
+            col.references.schema === selectedSchema &&
+            visibleTableNames.has(col.references.table)
+          ) {
             newEdges.push({
               id: `e-${table.name}-${col.name}-${col.references.table}-${col.references.column}`,
               source: table.name,
@@ -606,43 +647,12 @@ export function SchemaDiagram({
         });
       });
 
-      // Virtual (business-convention) relations — amber edges, only within
-      // the selected schema, mirroring the declared-FK behaviour above.
-      const tableNamesInSchema = new Set(filteredTables.map((t) => t.name));
-      const virtualEdgeColor = "#f59e0b";
-      (virtualRelations || []).forEach((rel, idx) => {
-        if (
-          rel.source.schema !== selectedSchema ||
-          rel.target.schema !== selectedSchema
-        ) {
-          return;
-        }
-        if (!tableNamesInSchema.has(rel.source.table) || !tableNamesInSchema.has(rel.target.table)) {
-          return;
-        }
-        newEdges.push({
-          id: `ev-${rel.source.table}-${rel.source.column}-${rel.target.table}-${rel.target.column}-${idx}`,
-          source: rel.source.table,
-          target: rel.target.table,
-          sourceHandle: `${rel.source.column}-source`,
-          targetHandle: `${rel.target.column}-target`,
-          animated: false,
-          type: "smoothstep",
-          style: {
-            stroke: virtualEdgeColor,
-            strokeWidth: 1.5,
-            strokeDasharray: "2,4",
-          },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 12,
-            height: 12,
-            color: virtualEdgeColor,
-          },
-          selectable: isEditable,
-          focusable: isEditable,
-        });
-      });
+      // Virtual (business-convention) relations — amber dashed edges, only
+      // between visible tables. Read from the ref so a poll tick does not
+      // re-run this layout effect.
+      newEdges.push(
+        ...buildVirtualEdges(virtualRelationsRef.current, visibleTableNames, selectedSchema, isEditable),
+      );
 
       if (token !== layoutTokenRef.current) return;
       console.log("[schema-layout] done", {
@@ -706,10 +716,10 @@ export function SchemaDiagram({
   // Virtual-relations-only updates: swap the amber edges WITHOUT touching
   // nodes or re-running dagre. Identity-preserving when nothing changed.
   useEffect(() => {
-    const tableNamesInSchema = new Set(filteredTables.map((t) => t.name));
+    const visibleTableNames = new Set(filteredTables.map((t) => t.name));
     setEdges((prev) => {
       const declared = prev.filter((e) => !e.id.startsWith(VIRTUAL_EDGE_PREFIX));
-      const virtual = buildVirtualEdges(virtualRelations, tableNamesInSchema, selectedSchema, isEditable);
+      const virtual = buildVirtualEdges(virtualRelations, visibleTableNames, selectedSchema, isEditable);
       const nextIds = new Set<string>();
       for (const e of declared) nextIds.add(e.id);
       for (const e of virtual) nextIds.add(e.id);
@@ -1156,6 +1166,22 @@ export function SchemaDiagram({
         {(refreshCurrentTab || isEditable) && (
           <Panel position="top-right">
             <div className="flex items-center gap-2">
+              {!isEditable && (
+                <div className="w-52">
+                  <MultiSelect
+                    options={sortedTables.map((t) => ({ value: t.name, label: t.name }))}
+                    selected={new Set(focusBySchema[selectedSchema] ?? [])}
+                    onChange={(next) => {
+                      setFocusBySchema((prev) => ({
+                        ...prev,
+                        [selectedSchema]: [...next],
+                      }));
+                    }}
+                    placeholder={`Focus tables (${sortedTables.length})`}
+                    className="h-8 bg-background border-border hover:bg-muted/40 text-xs justify-between shadow-sm"
+                  />
+                </div>
+              )}
               {isEditable && onAddTable && (
                 <Button
                   onClick={onAddTable}

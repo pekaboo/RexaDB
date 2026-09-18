@@ -106,7 +106,22 @@ function SchemaDiagramWithVirtualRelations({
   const virtualRelations = useVirtualRelations(
     props.dbType === "postgres" ? currentConnectionString : null,
   );
-  return <SchemaDiagram {...props} virtualRelations={virtualRelations} />;
+  // Stable, non-sensitive persistence key: a short hash of the connection
+  // string (never store the raw URL — it can embed credentials).
+  const focusKey = useConnectionFocusKey(currentConnectionString);
+  return <SchemaDiagram {...props} virtualRelations={virtualRelations} focusKey={focusKey} />;
+}
+
+/** djb2-style hash → base36, enough uniqueness for a localStorage key. */
+function useConnectionFocusKey(connectionString: string | null | undefined) {
+  const key = useMemo(() => {
+    const cs = String(connectionString || "");
+    if (!cs) return undefined;
+    let h = 5381;
+    for (let i = 0; i < cs.length; i++) h = ((h << 5) + h + cs.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }, [connectionString]);
+  return key;
 }
 
 function quoteColumn(rawColumn: string, dbType: string): string {
