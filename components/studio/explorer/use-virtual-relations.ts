@@ -31,12 +31,20 @@ export function useVirtualRelations(connectionString: string | null | undefined)
           const virtual = (res.data.all as ExplorerRelation[])
             .filter((r) => r.origin === "virtual" && !r.duplicatesDeclared)
             .map((r) => ({ source: r.source, target: r.target }));
-          setRelations(virtual);
+          // Content-stable update: a fresh array with identical data must NOT
+          // change the state reference, otherwise every poll re-renders the
+          // schema diagram (full dagre re-layout on 100+ table schemas).
+          setRelations((prev) => {
+            if (prev && prev.length === virtual.length && JSON.stringify(prev) === JSON.stringify(virtual)) {
+              return prev;
+            }
+            return virtual;
+          });
         } else if (!cancelled) {
-          setRelations([]);
+          setRelations((prev) => (prev === null ? [] : prev));
         }
       } catch {
-        if (!cancelled) setRelations([]);
+        if (!cancelled) setRelations((prev) => (prev === null ? [] : prev));
       }
     };
 

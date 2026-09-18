@@ -135,6 +135,42 @@ interface SchemaDiagramProps {
   }> | null;
 }
 
+const VIRTUAL_EDGE_PREFIX = "ev-";
+
+/** Build amber dashed edges for virtual (business-convention) relations.
+ * Pure helper shared by the layout effect and the lightweight edge-swap
+ * effect so edge ids stay identical in both paths. */
+function buildVirtualEdges(
+  virtualRelations: Array<{
+    source: { schema: string; table: string; column: string };
+    target: { schema: string; table: string; column: string };
+  }> | null | undefined,
+  tableNamesInSchema: Set<string>,
+  selectedSchema: string,
+  isEditable: boolean,
+): Edge[] {
+  const virtualEdgeColor = "#f59e0b";
+  const out: Edge[] = [];
+  (virtualRelations || []).forEach((rel, idx) => {
+    if (rel.source.schema !== selectedSchema || rel.target.schema !== selectedSchema) return;
+    if (!tableNamesInSchema.has(rel.source.table) || !tableNamesInSchema.has(rel.target.table)) return;
+    out.push({
+      id: `ev-${rel.source.table}-${rel.source.column}-${rel.target.table}-${rel.target.column}-${idx}`,
+      source: rel.source.table,
+      target: rel.target.table,
+      sourceHandle: `${rel.source.column}-source`,
+      targetHandle: `${rel.target.column}-target`,
+      animated: false,
+      type: "smoothstep",
+      style: { stroke: virtualEdgeColor, strokeWidth: 1.5, strokeDasharray: "2,4" },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: virtualEdgeColor },
+      selectable: isEditable,
+      focusable: isEditable,
+    });
+  });
+  return out;
+}
+
 // Custom Node Component for Tables
 const TableNode = ({ data }: { data: TableData }) => {
   const ROW_HEIGHT = 28;
@@ -665,12 +701,24 @@ export function SchemaDiagram({
     layoutMode,
     isEditable,
     allowConnect,
-    virtualRelations,
   ]);
 
+  // Virtual-relations-only updates: swap the amber edges WITHOUT touching
+  // nodes or re-running dagre. Identity-preserving when nothing changed.
   useEffect(() => {
-    // Skip automatic Dagre re-layout to keep the UI responsive.
-  }, []);
+    const tableNamesInSchema = new Set(filteredTables.map((t) => t.name));
+    setEdges((prev) => {
+      const declared = prev.filter((e) => !e.id.startsWith(VIRTUAL_EDGE_PREFIX));
+      const virtual = buildVirtualEdges(virtualRelations, tableNamesInSchema, selectedSchema, isEditable);
+      const nextIds = new Set<string>();
+      for (const e of declared) nextIds.add(e.id);
+      for (const e of virtual) nextIds.add(e.id);
+      if (nextIds.size === prev.length && prev.every((e) => nextIds.has(e.id))) {
+        return prev;
+      }
+      return [...declared, ...virtual];
+    });
+  }, [virtualRelations, filteredTables, selectedSchema, isEditable, setEdges]);
 
   const applyAutoLayout = useCallback(() => {
     setLayoutMode("auto");
@@ -919,6 +967,7 @@ export function SchemaDiagram({
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onlyRenderVisibleElements
         onInit={(instance) => {
           reactFlowRef.current = instance;
         }}
