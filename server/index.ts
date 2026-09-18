@@ -790,7 +790,7 @@ app.post("/api/search-index/clear", dynamicPostRoute("../lib/db/search-index-act
 app.post("/api/search-index/status", dynamicPostRoute("../lib/db/search-index-actions", (body, m) => m.getSearchIndexStatus(body.connectionString)));
 
 // Entity Explorer — relationship union layer + virtual relations (local metadata only, never DDL)
-app.post("/api/relations/list", dynamicPostRoute("../lib/db/relations", (body, m) => m.getMergedRelations(body.connectionString)));
+app.post("/api/relations/list", dynamicPostRoute("../lib/db/relations", async (body, m) => ({ success: true, data: await m.getMergedRelations(body.connectionString) })));
 
 app.post("/api/relations/upsert", dynamicPostRoute("../lib/db/relations", (body, m) => m.upsertVirtualRelation(body.connectionString, body.relation)));
 
@@ -809,7 +809,7 @@ app.post("/api/entity/related-rows", dynamicPostRoute("../lib/db/entity-explorer
 
 app.post("/api/entity/searchable-columns", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.getSearchableColumnConfig(body.connectionString)));
 
-app.post("/api/entity/searchable-columns/effective", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.computeSearchableColumns(body.connectionString)));
+app.post("/api/entity/searchable-columns/effective", dynamicPostRoute("../lib/db/entity-explorer-actions", async (body, m) => ({ success: true, data: await m.computeSearchableColumns(body.connectionString) })));
 
 app.post("/api/entity/searchable-columns/save", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.saveSearchableColumnConfig(body.connectionString, body.entries)));
 
