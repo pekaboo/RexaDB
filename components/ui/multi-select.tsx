@@ -23,6 +23,13 @@ interface MultiSelectProps {
   emptyText?: string;
   loading?: boolean;
   className?: string;
+  /** "list" (default, single column) or "grid" (multi-column tiles). */
+  layout?: "list" | "grid";
+  /** Column count for layout="grid". */
+  gridColumns?: number;
+  /** Extra classes for the popover content (e.g. a wider fixed width for
+   * grid layouts — overrides the trigger-matched default width). */
+  contentClassName?: string;
 }
 
 export function MultiSelect({
@@ -33,6 +40,9 @@ export function MultiSelect({
   emptyText = "No options",
   loading = false,
   className,
+  layout = "list",
+  gridColumns = 3,
+  contentClassName,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -78,7 +88,7 @@ export function MultiSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[var(--radix-popover-trigger-width)] p-0"
+        className={cn("w-[var(--radix-popover-trigger-width)] p-0", contentClassName)}
         align="start"
       >
         <div className="flex items-center border-b px-3">
@@ -117,7 +127,7 @@ export function MultiSelect({
             </button>
           </div>
         </div>
-        <div className="max-h-56 overflow-y-auto">
+        <div className={cn("overflow-y-auto", layout === "grid" ? "max-h-80" : "max-h-56")}>
           {loading ? (
             <div className="flex items-center justify-center py-6">
               <div className="h-4 w-4 animate-spin rounded-full border border-muted-foreground/30 border-t-muted-foreground" />
@@ -125,6 +135,35 @@ export function MultiSelect({
           ) : filtered.length === 0 ? (
             <div className="py-6 text-center text-sm text-muted-foreground">
               {emptyText}
+            </div>
+          ) : layout === "grid" ? (
+            <div
+              className="grid items-start gap-0.5 p-1.5"
+              style={{ gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))` }}
+            >
+              {filtered.map((opt) => {
+                const isSelected = selected.has(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => toggle(opt.value)}
+                    title={opt.label}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer"
+                  >
+                    <div
+                      className={cn(
+                        "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border transition-colors",
+                        isSelected
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border",
+                      )}
+                    >
+                      {isSelected && <Check className="h-2.5 w-2.5" />}
+                    </div>
+                    <span className="truncate">{opt.label}</span>
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className="p-1">

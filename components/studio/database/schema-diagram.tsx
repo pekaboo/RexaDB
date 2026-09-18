@@ -534,18 +534,29 @@ export function SchemaDiagram({
   }, [selectedSchema]);
 
   // ─── Focus-table selection persistence (per connection, per schema) ──
+  // loadedFocusKey guards a subtle race: on mount (and whenever focusKey
+  // changes), the save effect must not fire with stale state BEFORE the
+  // load effect has applied the stored selection — otherwise an empty {}
+  // would clobber the saved selection on every reload. Load sets both
+  // atomically (same batched render), so save only runs when the state in
+  // hand belongs to the current key.
+  const [loadedFocusKey, setLoadedFocusKey] = useState<string | null>(null);
   useEffect(() => {
     if (!focusKey || typeof window === "undefined") return;
+    let parsed: Record<string, string[]> = {};
     try {
       const raw = window.localStorage.getItem(`rexa-schema-focus:${focusKey}`);
-      if (raw) setFocusBySchema(JSON.parse(raw));
+      if (raw) parsed = JSON.parse(raw);
     } catch {
       // malformed storage — start fresh
     }
+    setFocusBySchema(parsed);
+    setLoadedFocusKey(focusKey);
   }, [focusKey]);
 
   useEffect(() => {
     if (!focusKey || typeof window === "undefined") return;
+    if (loadedFocusKey !== focusKey) return;
     try {
       window.localStorage.setItem(
         `rexa-schema-focus:${focusKey}`,
@@ -554,7 +565,7 @@ export function SchemaDiagram({
     } catch {
       // storage unavailable — selection just won't persist
     }
-  }, [focusKey, focusBySchema]);
+  }, [focusKey, focusBySchema, loadedFocusKey]);
 
   useEffect(() => {
     if (!copied) return;
@@ -1212,6 +1223,9 @@ export function SchemaDiagram({
                     options={focusOptions}
                     selected={focusSelected}
                     onChange={setFocusSelection}
+                    layout="grid"
+                    gridColumns={4}
+                    contentClassName="w-[620px]"
                     placeholder={
                       schemaTables.length > FOCUS_EMPTY_THRESHOLD
                         ? `Pick tables to focus (${schemaTables.length})`
@@ -1378,6 +1392,9 @@ export function SchemaDiagram({
                   options={focusOptions}
                   selected={focusSelected}
                   onChange={setFocusSelection}
+                  layout="grid"
+                  gridColumns={4}
+                  contentClassName="w-[620px]"
                   placeholder={`Pick tables to focus (${schemaTables.length})`}
                   className="h-9 text-xs justify-between"
                 />
