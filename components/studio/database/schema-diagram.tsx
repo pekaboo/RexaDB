@@ -141,6 +141,10 @@ interface SchemaDiagramProps {
 
 const VIRTUAL_EDGE_PREFIX = "ev-";
 
+/** Schemas with more tables than this start with an empty, focused canvas
+ * instead of mounting every table node on first render. */
+const FOCUS_EMPTY_THRESHOLD = 25;
+
 /** Build amber dashed edges for virtual (business-convention) relations.
  * Pure helper shared by the layout effect and the lightweight edge-swap
  * effect so edge ids stay identical in both paths. */
@@ -422,9 +426,12 @@ export function SchemaDiagram({
   positionsRef.current = positions;
   // Latest virtual relations via ref: the layout effect must NOT depend on
   // them (the 15s poll would trigger a full dagre re-layout). A dedicated
-  // lightweight effect swaps edges only.
+  // lightweight effect swaps edges only. Synced in an effect (not during
+  // render) to satisfy the react-hooks/refs rule.
   const virtualRelationsRef = useRef(virtualRelations);
-  virtualRelationsRef.current = virtualRelations;
+  useEffect(() => {
+    virtualRelationsRef.current = virtualRelations;
+  }, [virtualRelations]);
   const isEditable = mode === "editable";
   const allowConnect =
     isEditable || dbType === "postgres" || dbType === "supabase-mgmt";
@@ -467,26 +474,59 @@ export function SchemaDiagram({
   const miniMapNodeColor = "var(--muted-foreground)";
   const miniMapMaskColor = "color-mix(in srgb, var(--studio-bg) 80%, transparent)";
 
-  const filteredTables = useMemo(() => {
+  // All tables in the current schema, WITHOUT the focus filter — the
+  // dropdown's option list must never shrink as the user selects (that
+  // was the "options disappear after picking one" bug).
+  const schemaTables = useMemo(() => {
     if (!schemaData) return [] as TableData[];
-    const schemaTables = Object.values(schemaData).filter(
+    return Object.values(schemaData).filter(
       (t: any) => t.schema.toLowerCase() === selectedSchema.toLowerCase(),
     );
-    // Apply the focus-table selection for this schema. If none of the
-    // selected tables exist here (e.g. after switching schemas or a
-    // rename), fall back to showing everything rather than a blank canvas.
+  }, [schemaData, selectedSchema]);
+
+  const filteredTables = useMemo(() => {
+    // Apply the focus-table selection for this schema.
     const focusList = focusBySchema[selectedSchema];
     if (focusList && focusList.length > 0) {
       const focusSet = new Set(focusList);
       const intersect = schemaTables.filter((t: any) => focusSet.has(t.name));
       if (intersect.length > 0) return intersect;
     }
-    return schemaTables;
-  }, [schemaData, selectedSchema, focusBySchema]);
+    // No (or stale) selection: small schemas show everything; large ones
+    // start EMPTY — mounting 100+ heavy table nodes on entry is what made
+    // the page feel frozen. The empty state prompts the user to pick.
+    return schemaTables.length > FOCUS_EMPTY_THRESHOLD ? [] : schemaTables;
+  }, [schemaTables, focusBySchema, selectedSchema]);
 
   const sortedTables = useMemo(
     () => [...filteredTables].sort((a, b) => a.name.localeCompare(b.name)),
     [filteredTables],
+  );
+
+  // Dropdown source: full, stable list of schema tables (sorted).
+  const sortedSchemaTables = useMemo(
+    () => [...schemaTables].sort((a, b) => a.name.localeCompare(b.name)),
+    [schemaTables],
+  );
+
+  const focusOptions = useMemo(
+    () => sortedSchemaTables.map((t) => ({ value: t.name, label: t.name })),
+    [sortedSchemaTables],
+  );
+
+  const focusSelected = useMemo(
+    () => new Set(focusBySchema[selectedSchema] ?? []),
+    [focusBySchema, selectedSchema],
+  );
+
+  const setFocusSelection = useCallback(
+    (next: Set<string>) => {
+      setFocusBySchema((prev) => ({
+        ...prev,
+        [selectedSchema]: [...next],
+      }));
+    },
+    [selectedSchema],
   );
 
   useEffect(() => {
@@ -1166,18 +1206,17 @@ export function SchemaDiagram({
         {(refreshCurrentTab || isEditable) && (
           <Panel position="top-right">
             <div className="flex items-center gap-2">
-              {!isEditable && (
-                <div className="w-52">
+              {!isEditable && focusOptions.length > 0 && (
+                <div className="w-56">
                   <MultiSelect
-                    options={sortedTables.map((t) => ({ value: t.name, label: t.name }))}
-                    selected={new Set(focusBySchema[selectedSchema] ?? [])}
-                    onChange={(next) => {
-                      setFocusBySchema((prev) => ({
-                        ...prev,
-                        [selectedSchema]: [...next],
-                      }));
-                    }}
-                    placeholder={`Focus tables (${sortedTables.length})`}
+                    options={focusOptions}
+                    selected={focusSelected}
+                    onChange={setFocusSelection}
+                    placeholder={
+                      schemaTables.length > FOCUS_EMPTY_THRESHOLD
+                        ? `Pick tables to focus (${schemaTables.length})`
+                        : `Focus tables (${schemaTables.length})`
+                    }
                     className="h-8 bg-background border-border hover:bg-muted/40 text-xs justify-between shadow-sm"
                   />
                 </div>
@@ -1320,8 +1359,34 @@ export function SchemaDiagram({
           </Panel>
         )}
       </ReactFlow>
-    </div>
-  );
+
+        {/* Empty state: large schema with no focus selection (or a stale
+            selection) — prompt instead of mounting 100+ table nodes. */}
+        {!isEditable && schemaTables.length > 0 && sortedTables.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <div className="pointer-events-auto flex max-w-sm flex-col items-center gap-3 rounded-xl border border-border bg-background/95 p-6 text-center shadow-lg backdrop-blur">
+              <TableIcon className="size-8 text-muted-foreground" />
+              <div className="text-sm font-medium">
+                {selectedSchema} has {schemaTables.length} tables
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Pick the tables you care about — only they will be laid out and
+                connected. Select All shows everything.
+              </div>
+              <div className="w-64">
+                <MultiSelect
+                  options={focusOptions}
+                  selected={focusSelected}
+                  onChange={setFocusSelection}
+                  placeholder={`Pick tables to focus (${schemaTables.length})`}
+                  className="h-9 text-xs justify-between"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
 }
 
 function makeCopyNameHandler() {
