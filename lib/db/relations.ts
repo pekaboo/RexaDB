@@ -104,6 +104,12 @@ function relationKey(r: {
   ].join("|");
 }
 
+async function requireConnectionString(connectionString: string): Promise<string> {
+  const cs = String(connectionString || "").trim();
+  if (!cs) throw new Error("No database connection selected.");
+  return cs;
+}
+
 async function getDeps() {
   const { db } = await import("./index");
   const { virtualRelations } = await import("./schema");
@@ -283,6 +289,7 @@ export type MergedRelationsResult = {
 };
 
 export async function getMergedRelations(connectionString: string): Promise<MergedRelationsResult> {
+  await requireConnectionString(connectionString);
   const [columns, virtual] = await Promise.all([
     fetchColumnsForRelations(connectionString),
     listVirtualRelations(connectionString),
@@ -448,6 +455,7 @@ export function suggestRelationsFromColumns(
 
 export async function suggestRelations(connectionString: string): Promise<{ success: boolean; data?: RelationSuggestion[]; error?: string }> {
   try {
+    await requireConnectionString(connectionString);
     const merged = await getMergedRelations(connectionString);
     const columns = await fetchColumnsForRelations(connectionString);
     return { success: true, data: suggestRelationsFromColumns(columns, merged.all) };
@@ -469,6 +477,7 @@ export async function verifyRelation(
   input: { sourceSchema: string; sourceTable: string; sourceColumn: string; targetSchema: string; targetTable: string; targetColumn: string },
 ): Promise<{ success: boolean; data?: { sampled: number; orphans: number; orphanRate: number }; error?: string }> {
   try {
+    await requireConnectionString(connectionString);
     const { executeQuery } = await import("./pg-client");
     const { quotePgIdentifier } = await import("./quote-identifier");
     const srcCol = quotePgIdentifier(input.sourceColumn);
@@ -488,6 +497,10 @@ export async function verifyRelation(
           SELECT 1 FROM ${tgtTable} t WHERE t.${tgtCol} = sample.v
         ))::int AS orphans
       FROM sample`;
+
+    // Mechanism-enforced read-only: same guard as every other query.
+    const { ensureReadOnlySql } = await import("./sql-guards");
+    ensureReadOnlySql(sql);
 
     const result = await executeQuery(connectionString, sql);
     const row = result?.rows?.[0] || { sampled: 0, orphans: 0 };

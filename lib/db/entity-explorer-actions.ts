@@ -124,7 +124,16 @@ export function pickDisplayColumn(cols: CachedColumnRow[]): string | null {
 
 // ─── Row estimates ──────────────────────────────────────────────────────
 
+/** Guard: reject calls with no connection selected (tab can open before a
+ * connection is picked in some flows). */
+function ensureCs(connectionString: string): string {
+  const cs = String(connectionString || "").trim();
+  if (!cs) throw new Error("No database connection selected.");
+  return cs;
+}
+
 export async function getRowEstimates(connectionString: string): Promise<Map<string, number>> {
+  ensureCs(connectionString);
   const { rows } = await executeReadOnlyWithTimeout(
     connectionString,
     `SELECT n.nspname AS schema_name, c.relname AS table_name, c.reltuples::bigint AS est_rows
@@ -215,6 +224,7 @@ export async function saveSearchableColumnConfig(
  * excluded from auto-pick.
  */
 export async function computeSearchableColumns(connectionString: string): Promise<SearchableColumn[]> {
+  ensureCs(connectionString);
   const [config, columns] = await Promise.all([
     getSearchableColumnConfig(connectionString),
     fetchColumnsForRelations(connectionString),
@@ -296,6 +306,7 @@ export async function searchEntities(
 ): Promise<{ success: boolean; data?: EntitySearchHit[]; error?: string; timedOutTables?: string[] }> {
   const trimmed = String(term || "").trim();
   if (!trimmed || trimmed.length < 1) return { success: true, data: [] };
+  ensureCs(connectionString);
 
   const searchable = await computeSearchableColumns(connectionString);
   const filtered = options?.schema ? searchable.filter((s) => s.schema.toLowerCase() === options.schema!.toLowerCase()) : searchable;
@@ -479,6 +490,7 @@ export async function getEntityOverview(
   pkValues: Record<string, unknown>,
 ): Promise<{ success: boolean; data?: EntityOverview; error?: string }> {
   try {
+    ensureCs(connectionString);
     const [columnsCache, merged] = await Promise.all([
       fetchColumnsForRelations(connectionString),
       getMergedRelations(connectionString),
@@ -627,6 +639,7 @@ export async function getRelatedRows(
   offset: number,
 ): Promise<{ success: boolean; data?: { rows: Record<string, unknown>[]; total: number | null; totalError: string | null; columns: Array<{ name: string; type: string | null; isPrimary: boolean }> }; error?: string }> {
   try {
+    ensureCs(connectionString);
     const columnsCache = await fetchColumnsForRelations(connectionString);
     const pkCols = getTablePkColumns(columnsCache, schema, table);
     if (pkCols.length === 0) {
