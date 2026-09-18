@@ -1279,3 +1279,174 @@ export function listWorkflowRuns(id: string, limit = 20) {
   return request<any[]>(buildUrl(`/api/workflows/${id}/runs`, { limit }));
 }
 
+// ─── Entity Explorer ────────────────────────────────────────────────────
+
+export type ExplorerRelationEndpoint = {
+  schema: string;
+  table: string;
+  column: string;
+};
+
+export type ExplorerRelation = {
+  source: ExplorerRelationEndpoint;
+  target: ExplorerRelationEndpoint;
+  origin: "declared" | "virtual";
+  virtualId?: number;
+  virtualOrigin?: "manual" | "inferred";
+  label?: string | null;
+  duplicatesDeclared?: boolean;
+};
+
+export type RelationSuggestion = {
+  source: ExplorerRelationEndpoint;
+  target: ExplorerRelationEndpoint;
+  confidence: "high";
+  reason: string;
+};
+
+export type EntitySearchHit = {
+  schema: string;
+  table: string;
+  column: string;
+  value: string;
+  pkValues: Record<string, unknown>;
+  display: string | null;
+};
+
+export type RelatedTableSection = {
+  relation: ExplorerRelation;
+  tableEstimate: number | null;
+  count: number | null;
+  countError: string | null;
+};
+
+export type ParentReference = {
+  relation: ExplorerRelation;
+  parentPkValues: Record<string, unknown> | null;
+  parentDisplay: string | null;
+  error: string | null;
+};
+
+export type EntityOverview = {
+  schema: string;
+  table: string;
+  pkColumns: string[];
+  columns: Array<{ name: string; type: string | null; isPrimary: boolean; nullable: boolean }>;
+  row: Record<string, unknown> | null;
+  displayColumn: string | null;
+  displayValue: string | null;
+  rowError: string | null;
+  incoming: RelatedTableSection[];
+  outgoing: ParentReference[];
+};
+
+export function fetchMergedRelations(connectionString: string) {
+  return request(buildUrl("/api/relations/list"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString }),
+  });
+}
+
+export function upsertVirtualRelation(
+  connectionString: string,
+  relation: {
+    sourceSchema: string;
+    sourceTable: string;
+    sourceColumns: string[];
+    targetSchema: string;
+    targetTable: string;
+    targetColumns: string[];
+    origin?: "manual" | "inferred";
+    label?: string | null;
+  },
+) {
+  return request(buildUrl("/api/relations/upsert"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, relation }),
+  });
+}
+
+export function deleteVirtualRelation(connectionString: string, id: number) {
+  return request(buildUrl("/api/relations/delete"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, id }),
+  });
+}
+
+export function fetchRelationSuggestions(connectionString: string) {
+  return request<RelationSuggestion[]>(buildUrl("/api/relations/suggest"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString }),
+  });
+}
+
+export function verifyExplorerRelation(
+  connectionString: string,
+  relation: { sourceSchema: string; sourceTable: string; sourceColumn: string; targetSchema: string; targetTable: string; targetColumn: string },
+) {
+  return request<{ sampled: number; orphans: number; orphanRate: number }>(buildUrl("/api/relations/verify"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, relation }),
+  });
+}
+
+export function searchEntities(connectionString: string, term: string, schema?: string) {
+  return request<EntitySearchHit[]>(buildUrl("/api/entity/search"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, term, schema }),
+  }) as Promise<{ success: boolean; data?: EntitySearchHit[]; error?: string; timedOutTables?: string[] }>;
+}
+
+export function fetchEntityOverview(
+  connectionString: string,
+  schema: string,
+  table: string,
+  pkValues: Record<string, unknown>,
+) {
+  return request<EntityOverview>(buildUrl("/api/entity/overview"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, schema, table, pkValues }),
+  });
+}
+
+export function fetchRelatedRows(
+  connectionString: string,
+  schema: string,
+  table: string,
+  pkValues: Record<string, unknown>,
+  target: { schema: string; table: string; column: string; parentColumn?: string },
+  offset: number,
+) {
+  return request<{ rows: Record<string, unknown>[]; total: number | null; totalError: string | null; columns: Array<{ name: string; type: string | null; isPrimary: boolean }> }>(buildUrl("/api/entity/related-rows"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, schema, table, pkValues, target, offset }),
+  });
+}
+
+export function fetchSearchableColumnConfig(connectionString: string) {
+  return request<{ rows: Array<{ schema: string; table: string; column: string; enabled: boolean }> }>(buildUrl("/api/entity/searchable-columns"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString }),
+  });
+}
+
+export function saveSearchableColumnConfig(
+  connectionString: string,
+  entries: Array<{ schema: string; table: string; column: string; enabled: boolean }>,
+) {
+  return request(buildUrl("/api/entity/searchable-columns/save"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString, entries }),
+  });
+}
+

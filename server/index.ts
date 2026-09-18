@@ -789,6 +789,30 @@ app.post("/api/search-index/clear", dynamicPostRoute("../lib/db/search-index-act
 
 app.post("/api/search-index/status", dynamicPostRoute("../lib/db/search-index-actions", (body, m) => m.getSearchIndexStatus(body.connectionString)));
 
+// Entity Explorer — relationship union layer + virtual relations (local metadata only, never DDL)
+app.post("/api/relations/list", dynamicPostRoute("../lib/db/relations", (body, m) => m.getMergedRelations(body.connectionString)));
+
+app.post("/api/relations/upsert", dynamicPostRoute("../lib/db/relations", (body, m) => m.upsertVirtualRelation(body.connectionString, body.relation)));
+
+app.post("/api/relations/delete", dynamicPostRoute("../lib/db/relations", (body, m) => m.deleteVirtualRelation(body.connectionString, body.id)));
+
+app.post("/api/relations/suggest", dynamicPostRoute("../lib/db/relations", (body, m) => m.suggestRelations(body.connectionString)));
+
+app.post("/api/relations/verify", dynamicPostRoute("../lib/db/relations", (body, m) => m.verifyRelation(body.connectionString, body.relation)));
+
+// Entity Explorer — entity search / overview / related rows
+app.post("/api/entity/search", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.searchEntities(body.connectionString, body.term, { schema: body.schema })));
+
+app.post("/api/entity/overview", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.getEntityOverview(body.connectionString, body.schema, body.table, body.pkValues)));
+
+app.post("/api/entity/related-rows", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.getRelatedRows(body.connectionString, body.schema, body.table, body.pkValues, body.target, body.offset)));
+
+app.post("/api/entity/searchable-columns", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.getSearchableColumnConfig(body.connectionString)));
+
+app.post("/api/entity/searchable-columns/effective", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.computeSearchableColumns(body.connectionString)));
+
+app.post("/api/entity/searchable-columns/save", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.saveSearchableColumnConfig(body.connectionString, body.entries)));
+
 app.post("/api/table-structure", proxyThreeArgRoute(mod.fetchTableStructure));
 
 app.post("/api/table-foreign-keys", proxyThreeArgRoute(mod.fetchTableForeignKeys));

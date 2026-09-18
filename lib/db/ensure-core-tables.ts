@@ -176,6 +176,34 @@ export async function ensureCoreTables() {
       { name: "error", type: "TEXT" },
       { name: "trigger", type: "TEXT", constraints: "NOT NULL" },
     ]).then(() => db.run(sql`CREATE INDEX IF NOT EXISTS workflow_runs_workflow_idx ON workflow_runs(workflow_id, started_at DESC)`)),
+    createTableIfNotExists("virtual_relations", [
+      { name: "id", type: "INTEGER", constraints: "PRIMARY KEY NOT NULL" },
+      { name: "connection_string", type: "TEXT", constraints: "NOT NULL" },
+      { name: "source_schema", type: "TEXT", constraints: "NOT NULL" },
+      { name: "source_table", type: "TEXT", constraints: "NOT NULL" },
+      { name: "source_columns", type: "TEXT", constraints: "NOT NULL" },
+      { name: "target_schema", type: "TEXT", constraints: "NOT NULL" },
+      { name: "target_table", type: "TEXT", constraints: "NOT NULL" },
+      { name: "target_columns", type: "TEXT", constraints: "NOT NULL" },
+      { name: "origin", type: "TEXT", constraints: "NOT NULL DEFAULT 'manual'" },
+      { name: "label", type: "TEXT" },
+      { name: "created_at", type: "INTEGER", constraints: "NOT NULL" },
+      { name: "updated_at", type: "INTEGER", constraints: "NOT NULL" },
+    ]).then(async () => {
+      await db.run(sql`CREATE INDEX IF NOT EXISTS virtual_relations_conn_idx ON virtual_relations(connection_string)`);
+      await db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS virtual_relations_uniq ON virtual_relations(connection_string, source_schema, source_table, source_columns, target_schema, target_table, target_columns)`);
+    }),
+    createTableIfNotExists("searchable_columns", [
+      { name: "id", type: "INTEGER", constraints: "PRIMARY KEY NOT NULL" },
+      { name: "connection_string", type: "TEXT", constraints: "NOT NULL" },
+      { name: "schema_name", type: "TEXT", constraints: "NOT NULL" },
+      { name: "table_name", type: "TEXT", constraints: "NOT NULL" },
+      { name: "column_name", type: "TEXT", constraints: "NOT NULL" },
+      { name: "enabled", type: "INTEGER", constraints: "NOT NULL DEFAULT 1" },
+    ]).then(async () => {
+      await db.run(sql`CREATE INDEX IF NOT EXISTS searchable_columns_conn_idx ON searchable_columns(connection_string)`);
+      await db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS searchable_columns_uniq ON searchable_columns(connection_string, schema_name, table_name, column_name)`);
+    }),
   ];
 
   if (coreTablesEnsured) {
