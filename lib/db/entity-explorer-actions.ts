@@ -302,14 +302,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function searchEntities(
   connectionString: string,
   term: string,
-  options?: { schema?: string },
+  options?: { schema?: string; table?: string },
 ): Promise<{ success: boolean; data?: EntitySearchHit[]; error?: string; timedOutTables?: string[] }> {
   const trimmed = String(term || "").trim();
   if (!trimmed || trimmed.length < 1) return { success: true, data: [] };
   ensureCs(connectionString);
 
-  const searchable = await computeSearchableColumns(connectionString);
-  const filtered = options?.schema ? searchable.filter((s) => s.schema.toLowerCase() === options.schema!.toLowerCase()) : searchable;
+  let filtered = await computeSearchableColumns(connectionString);
+  if (options?.schema) {
+    filtered = filtered.filter((s) => s.schema.toLowerCase() === options.schema!.toLowerCase());
+  }
+  if (options?.table) {
+    filtered = filtered.filter((s) => s.table.toLowerCase() === options.table!.toLowerCase());
+  }
   if (filtered.length === 0) return { success: true, data: [] };
 
   const looksLikeInt = /^-?\d+$/.test(trimmed);

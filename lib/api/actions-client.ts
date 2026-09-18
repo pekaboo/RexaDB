@@ -1395,11 +1395,11 @@ export function verifyExplorerRelation(
   });
 }
 
-export function searchEntities(connectionString: string, term: string, schema?: string) {
+export function searchEntities(connectionString: string, term: string, schema?: string, table?: string) {
   return request<EntitySearchHit[]>(buildUrl("/api/entity/search"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connectionString, term, schema }),
+    body: JSON.stringify({ connectionString, term, schema, table }),
   }) as Promise<{ success: boolean; data?: EntitySearchHit[]; error?: string; timedOutTables?: string[] }>;
 }
 
@@ -1433,6 +1433,14 @@ export function fetchRelatedRows(
 
 export function fetchSearchableColumnConfig(connectionString: string) {
   return request<{ rows: Array<{ schema: string; table: string; column: string; enabled: boolean }> }>(buildUrl("/api/entity/searchable-columns"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectionString }),
+  });
+}
+
+export function fetchEffectiveSearchableColumns(connectionString: string) {
+  return request<Array<{ schema: string; table: string; column: string; data_type: string | null; is_primary: boolean; kind: "eq" | "text" }>>(buildUrl("/api/entity/searchable-columns/effective"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ connectionString }),

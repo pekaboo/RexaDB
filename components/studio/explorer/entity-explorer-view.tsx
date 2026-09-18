@@ -12,13 +12,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { searchEntities, type EntitySearchHit } from "@/lib/api/actions-client";
+import { searchEntities, fetchEffectiveSearchableColumns, type EntitySearchHit } from "@/lib/api/actions-client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EntityPage, type EntityRef } from "./entity-page";
 import { RelationshipsManager } from "./relationships-manager";
 import {
+  ChevronDown,
   ChevronRight,
   Compass,
   Loader2,
@@ -27,6 +28,12 @@ import {
   Table2,
   X,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const MAX_STACK_DEPTH = 8;
 
@@ -52,6 +59,11 @@ export function EntityExplorerView({
   const [timedOutTables, setTimedOutTables] = useState<string[]>([]);
   const [stack, setStack] = useState<EntityRef[]>([]);
   const [stackIndex, setStackIndex] = useState(-1);
+  // Main-table scoping: null = search every table's searchable columns;
+  // a "schema|table" key restricts both the query and the visible scope
+  // hint so the user always knows what they are matching against.
+  const [mainTable, setMainTable] = useState<string | null>(null);
+  const [searchableCols, setSearchableCols] = useState<Array<{ schema: string; table: string; column: string; kind: "eq" | "text" }>>([]);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestSearchRef = useRef<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -71,6 +83,53 @@ export function EntityExplorerView({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Load the effective searchable-column set once per connection — feeds
+  // the main-table picker and the scope hint.
+  useEffect(() => {
+    if (!connectionString) {
+      setSearchableCols([]);
+      setMainTable(null);
+      return;
+    }
+    let cancelled = false;
+    fetchEffectiveSearchableColumns(connectionString)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && Array.isArray(res.data)) setSearchableCols(res.data);
+        else setSearchableCols([]);
+      })
+      .catch(() => {
+        if (!cancelled) setSearchableCols([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionString]);
+
+  // schema|table → its searchable columns (for the scope hint).
+  const columnsByTable = useMemo(() => {
+    const map = new Map<string, Array<{ schema: string; table: string; column: string; kind: "eq" | "text" }>>();
+    for (const c of searchableCols) {
+      const key = `${c.schema}|${c.table}`;
+      const list = map.get(key) || [];
+      list.push(c);
+      map.set(key, list);
+    }
+    return map;
+  }, [searchableCols]);
+
+  const mainTableOptions = useMemo(
+    () => Array.from(columnsByTable.keys()).sort((a, b) => a.split("|")[1].localeCompare(b.split("|")[1])),
+    [columnsByTable],
+  );
+
+  const mainTableInfo = useMemo(() => {
+    if (!mainTable) return null;
+    const cols = columnsByTable.get(mainTable);
+    if (!cols || cols.length === 0) return null;
+    return { schema: cols[0].schema, table: cols[0].table, columns: cols };
+  }, [mainTable, columnsByTable]);
+
   const runSearch = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (trimmed.length < 1) {
@@ -81,8 +140,9 @@ export function EntityExplorerView({
     setSearching(true);
     // Guard against stale responses overwriting newer results
     latestSearchRef.current = trimmed;
+    const scope = mainTableInfo ? { schema: mainTableInfo.schema, table: mainTableInfo.table } : undefined;
     try {
-      const res = await searchEntities(connectionString, trimmed);
+      const res = await searchEntities(connectionString, trimmed, scope?.schema, scope?.table);
       if (latestSearchRef.current !== trimmed) return;
       if (res.success) {
         setHits(res.data ?? []);
@@ -97,7 +157,7 @@ export function EntityExplorerView({
     } finally {
       if (latestSearchRef.current === trimmed) setSearching(false);
     }
-  }, [connectionString]);
+  }, [connectionString, mainTableInfo]);
 
   // Debounced search
   useEffect(() => {
@@ -155,12 +215,52 @@ export function EntityExplorerView({
     <div className="flex h-full min-h-0 flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        {/* Main-table scope picker: choose the entity type first, then the
+            search term is matched against THAT table's searchable columns. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-9 shrink-0 gap-1.5 text-xs font-medium">
+              <Table2 className="size-3.5 text-muted-foreground" />
+              <span className="max-w-[160px] truncate">{mainTableInfo ? mainTableInfo.table : "All tables"}</span>
+              <ChevronDown className="size-3 opacity-50" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+            <DropdownMenuItem
+              onClick={() => setMainTable(null)}
+              className={cn("gap-2", !mainTable && "bg-accent")}
+            >
+              <Search className="size-3.5 text-muted-foreground" />
+              All tables
+            </DropdownMenuItem>
+            {mainTableOptions.map((key) => {
+              const cols = columnsByTable.get(key) ?? [];
+              const label = key.split("|")[1];
+              return (
+                <DropdownMenuItem
+                  key={key}
+                  onClick={() => setMainTable(key === mainTable ? null : key)}
+                  className={cn("gap-2", mainTable === key && "bg-accent")}
+                  title={cols.map((c) => c.column).join(", ")}
+                >
+                  <Table2 className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{label}</span>
+                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{cols.length}</span>
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <div className="relative min-w-0 flex-1 max-w-xl">
           <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={inputRef}
             className="h-9 pl-8"
-            placeholder="Search entities by any searchable column — email, phone, id, name…  (⌘K)"
+            placeholder={
+              mainTableInfo
+                ? `Match ${mainTableInfo.table}: ${mainTableInfo.columns.map((c) => c.column).join(" · ")}`
+                : "Type to search across searchable columns — all tables (⌘K)"
+            }
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             onKeyDown={(e) => {
@@ -267,7 +367,7 @@ export function EntityExplorerView({
                 )}
                 {hits && hits.length === 0 && !searching && (
                   <div className="flex flex-col items-center gap-1 py-12 text-center text-muted-foreground">
-                    <div className="text-sm">No matches for “{term.trim()}”</div>
+                    <div className="text-sm">No matches for “{term.trim()}”{mainTableInfo ? ` in ${mainTableInfo.table}` : ""}</div>
                     <div className="text-xs opacity-70">
                       Results may be filtered by RLS or permissions — absence here doesn&apos;t always mean the data doesn&apos;t exist.
                     </div>
