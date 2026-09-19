@@ -340,6 +340,7 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
   const [loading, setLoading] = useState(true);
   const [suggesting, setSuggesting] = useState(false);
   const [filter, setFilter] = useState("");
+  const [tableFilter, setTableFilter] = useState("");
   const [showEditor, setShowEditor] = useState(false);
   const [editorInitial, setEditorInitial] = useState<EditorState | null>(null);
 
@@ -404,13 +405,45 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
     }
   };
 
+  const tableOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of relations) {
+      for (const side of [r.source, r.target]) {
+        const key = `${side.schema}|${side.table}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, count]) => ({ key, schema: key.split("|")[0], table: key.split("|")[1], count }));
+  }, [relations]);
+
   const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    if (!f) return relations;
-    return relations.filter((r) =>
-      `${r.source.schema}.${r.source.table}.${r.source.column} ${r.target.schema}.${r.target.table}.${r.target.column}`.toLowerCase().includes(f),
-    );
-  }, [relations, filter]);
+    return relations.filter((r) => {
+      if (tableFilter) {
+        const srcHit = `${r.source.schema}|${r.source.table}` === tableFilter;
+        const tgtHit = `${r.target.schema}|${r.target.table}` === tableFilter;
+        if (!srcHit && !tgtHit) return false;
+      }
+      if (!f) return true;
+      return `${r.source.schema}.${r.source.table}.${r.source.column} ${r.target.schema}.${r.target.table}.${r.target.column}`.toLowerCase().includes(f);
+    });
+  }, [relations, filter, tableFilter]);
+
+  const filteredSuggestions = useMemo(() => {
+    if (!tableFilter && !filter.trim()) return suggestions;
+    const f = filter.trim().toLowerCase();
+    return suggestions.filter((s) => {
+      if (tableFilter) {
+        const srcHit = `${s.source.schema}|${s.source.table}` === tableFilter;
+        const tgtHit = `${s.target.schema}|${s.target.table}` === tableFilter;
+        if (!srcHit && !tgtHit) return false;
+      }
+      if (!f) return true;
+      return `${s.source.schema}.${s.source.table}.${s.source.column} ${s.target.schema}.${s.target.table}.${s.target.column}`.toLowerCase().includes(f);
+    });
+  }, [suggestions, filter, tableFilter]);
 
   const virtualCount = relations.filter((r) => r.origin === "virtual").length;
   const declaredCount = relations.filter((r) => r.origin === "declared").length;
@@ -428,12 +461,25 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
           <div className="relative">
             <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
-              className="h-8 w-52 pl-7 text-xs"
+                           className="h-8 w-52 pl-7 text-xs"
               placeholder="Filter relations…"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             />
           </div>
+          <select
+            className="h-8 max-w-52 rounded-md border border-border bg-background px-2 text-xs"
+            value={tableFilter}
+            onChange={(e) => setTableFilter(e.target.value)}
+            title="Show relations touching this table (either side)"
+          >
+            <option value="">All tables</option>
+            {tableOptions.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.table} ({t.count})
+              </option>
+            ))}
+          </select>
           <Button
             size="sm"
             variant="outline"
@@ -483,12 +529,12 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
             <Sparkles className="size-3.5 text-amber-500" />
             Suggestions ({suggestions.length}) — verify with data, then accept
           </div>
-          {suggestions.slice(0, 50).map((s, i) => (
+          {filteredSuggestions.slice(0, 50).map((s) => (
             <SuggestionRow
-              key={`${s.source.schema}.${s.source.table}.${s.source.column}-${i}`}
+              key={`${s.source.schema}.${s.source.table}.${s.source.column}-${s.target.schema}.${s.target.table}.${s.target.column}`}
               connectionString={connectionString}
               suggestion={s}
-              onHandled={() => setSuggestions((prev) => prev.filter((_, j) => j !== i))}
+              onHandled={() => setSuggestions((prev) => prev.filter((x) => x !== s))}
             />
           ))}
         </div>
