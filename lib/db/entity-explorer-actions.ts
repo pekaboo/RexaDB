@@ -308,6 +308,13 @@ export async function searchEntities(
   if (!trimmed || trimmed.length < 1) return { success: true, data: [] };
   ensureCs(connectionString);
 
+  // Warm the connection pool FIRST, with its own generous budget — a cold
+  // pool (fresh TCP + auth, possibly via the libpqcompat proxy path) can
+  // take seconds to establish, and that latency must not eat the per-table
+  // query budget (it produced bogus "skipped slow table" reports on tiny
+  // tables when the pool happened to be cold).
+  await executeReadOnlyWithTimeout(connectionString, "SELECT 1", [], 10_000).catch(() => {});
+
   let filtered = await computeSearchableColumns(connectionString);
   if (options?.schema) {
     filtered = filtered.filter((s) => s.schema.toLowerCase() === options.schema!.toLowerCase());
@@ -333,6 +340,9 @@ export async function searchEntities(
   // Cheap size gate: skip ILIKE on huge tables (unless the searchable set
   // was explicitly configured, in which case the user opted in).
   const explicitlyConfigured = (await getSearchableColumnConfig(connectionString)).rows.length > 0;
+  // Scoped search (a main table was picked) gets a longer budget: the user
+  // explicitly wants THIS table searched, so allow big seq scans.
+  const perTableTimeoutMs = options?.table ? 10_000 : SEARCH_TIMEOUT_MS;
   let estimates = new Map<string, number>();
   if (!explicitlyConfigured) {
     try {
@@ -394,7 +404,7 @@ export async function searchEntities(
     const sql = `SELECT ${selectCols.join(", ")} FROM ${quotePgIdentifier(schema)}.${quotePgIdentifier(table)} WHERE ${conditions.join(" OR ")} LIMIT ${SEARCH_MAX_PER_TABLE}`;
 
     try {
-      const { rows } = await executeReadOnlyWithTimeout(connectionString, sql, params, SEARCH_TIMEOUT_MS);
+      const { rows } = await executeReadOnlyWithTimeout(connectionString, sql, params, perTableTimeoutMs);
       for (const row of rows) {
         if (hits.length >= SEARCH_MAX_TOTAL) return;
         let matchedColumn = "";

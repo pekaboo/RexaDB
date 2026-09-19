@@ -367,15 +367,21 @@ export function EntityExplorerView({
                 )}
                 {hits && hits.length === 0 && !searching && (
                   <div className="flex flex-col items-center gap-1 py-12 text-center text-muted-foreground">
-                    <div className="text-sm">No matches for “{term.trim()}”{mainTableInfo ? ` in ${mainTableInfo.table}` : ""}</div>
-                    <div className="text-xs opacity-70">
-                      Results may be filtered by RLS or permissions — absence here doesn&apos;t always mean the data doesn&apos;t exist.
+                    <div className="text-sm">
+                      {timedOutTables.length > 0
+                        ? "Search didn't finish everywhere — see the notice below"
+                        : <>No matches for “{term.trim()}”{mainTableInfo ? ` in ${mainTableInfo.table}` : ""}</>}
                     </div>
+                    {timedOutTables.length === 0 && (
+                      <div className="text-xs opacity-70">
+                        Results may be filtered by RLS or permissions — absence here doesn&apos;t always mean the data doesn&apos;t exist.
+                      </div>
+                    )}
                   </div>
                 )}
                 {timedOutTables.length > 0 && (
                   <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                    Skipped slow tables (2s timeout): {timedOutTables.join(", ")}
+                    Query timed out on: {timedOutTables.join(", ")} — the value may still exist there. Try again (the connection is now warm) or narrow the scope to that table.
                   </div>
                 )}
                 {groupedHits.map(([groupKey, groupHits]) => (
