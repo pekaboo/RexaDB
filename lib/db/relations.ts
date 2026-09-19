@@ -134,11 +134,15 @@ export async function getConnectionIdentity(connectionString: string): Promise<s
   let key = "";
   try {
     const { executeQuery } = await import("./pg-client");
-    const identity = Promise.race([
-      executeQuery(cs, "SELECT current_database() AS db, system_identifier AS sid FROM pg_control_system()", [], { queryId: "relations.identity" }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("identity timeout")), 5_000)),
-    ]) as Promise<{ rows: Array<{ db?: string; sid?: string | bigint }> }>;
-    const { rows } = await identity;
+    const query = executeQuery(cs, "SELECT current_database() AS db, system_identifier AS sid FROM pg_control_system()", [], { queryId: "relations.identity" })
+      .catch(() => null) as Promise<{ rows: Array<{ db?: string; sid?: string | bigint }> } | null>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), 5_000);
+    });
+    const winner = await Promise.race([query, timeout]);
+    if (timer) clearTimeout(timer);
+    const rows = winner?.rows;
     const sid = rows?.[0]?.sid;
     const db = rows?.[0]?.db;
     if (sid && db) key = `pgsys:${sid}:${db}`;

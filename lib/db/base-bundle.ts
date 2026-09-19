@@ -137,6 +137,16 @@ export async function importBase(
     .returning();
   const newId = newConn.id;
 
+  // Insert helper: one corrupt/duplicate section must not fail the whole
+  // import midway (the connection row already exists at that point).
+  const tryInsert = async (label: string, fn: () => Promise<unknown>): Promise<void> => {
+    try {
+      await fn();
+    } catch {
+      // section skipped — malformed bundle section or rows already present
+    }
+  };
+
   // Open tabs: regenerate text ids, remap active tab reference.
   const tabIdMap = new Map<string, string>();
   const tabsIn = (bundle.openTabs as Row[] | undefined) ?? [];
@@ -145,17 +155,19 @@ export async function importBase(
     tabIdMap.set(oldId, `${oldId}-${rand()}`);
   }
   if (tabsIn.length > 0) {
-    await d.db.insert(d.openTabs).values(
-      tabsIn.map((t) => ({
-        id: tabIdMap.get(String(t.id))!,
-        connectionId: newId,
-        type: String(t.type ?? "table"),
-        name: String(t.name ?? ""),
-        schema: (t.schema as string) ?? null,
-        query: (t.query as string) ?? null,
-        order: Number(t.order ?? 0),
-        pinned: Boolean(t.pinned),
-      })),
+    await tryInsert("openTabs", () =>
+      d.db.insert(d.openTabs).values(
+        tabsIn.map((t) => ({
+          id: tabIdMap.get(String(t.id))!,
+          connectionId: newId,
+          type: String(t.type ?? "table"),
+          name: String(t.name ?? ""),
+          schema: (t.schema as string) ?? null,
+          query: (t.query as string) ?? null,
+          order: Number(t.order ?? 0),
+          pinned: Boolean(t.pinned),
+        })),
+      ),
     );
   }
 
@@ -163,30 +175,36 @@ export async function importBase(
   const settingsIn = bundle.connectionSettings as Row | null | undefined;
   if (settingsIn) {
     const { connectionId: _c, activeTabId, ...rest } = settingsIn;
-    await d.db.insert(d.connectionSettings).values({
-      ...(rest as any),
-      connectionId: newId,
-      activeTabId: activeTabId ? (tabIdMap.get(String(activeTabId)) ?? null) : null,
-    } as any);
+    await tryInsert("connectionSettings", () =>
+      d.db.insert(d.connectionSettings).values({
+        ...(rest as any),
+        connectionId: newId,
+        activeTabId: activeTabId ? (tabIdMap.get(String(activeTabId)) ?? null) : null,
+      } as any),
+    );
   }
 
   // Dashboard + note state: keyed by connection only.
   const dashIn = bundle.dashboardState as Row | null | undefined;
   if (dashIn) {
-    await d.db.insert(d.dashboardState).values({
-      connectionId: newId,
-      dashboardsJson: String(dashIn.dashboardsJson ?? "[]"),
-      foldersJson: String(dashIn.foldersJson ?? "[]"),
-      updatedAt: Number(dashIn.updatedAt ?? Date.now()),
-    });
+    await tryInsert("dashboardState", () =>
+      d.db.insert(d.dashboardState).values({
+        connectionId: newId,
+        dashboardsJson: String(dashIn.dashboardsJson ?? "[]"),
+        foldersJson: String(dashIn.foldersJson ?? "[]"),
+        updatedAt: Number(dashIn.updatedAt ?? Date.now()),
+      }),
+    );
   }
   const noteIn = bundle.noteState as Row | null | undefined;
   if (noteIn) {
-    await d.db.insert(d.noteState).values({
-      connectionId: newId,
-      notesJson: String(noteIn.notesJson ?? "[]"),
-      updatedAt: Number(noteIn.updatedAt ?? Date.now()),
-    });
+    await tryInsert("noteState", () =>
+      d.db.insert(d.noteState).values({
+        connectionId: newId,
+        notesJson: String(noteIn.notesJson ?? "[]"),
+        updatedAt: Number(noteIn.updatedAt ?? Date.now()),
+      }),
+    );
   }
 
   // Table tags: rows without meaningful ids.
@@ -205,17 +223,19 @@ export async function importBase(
   // and may not exist on the target machine — snippets land at root).
   const snipsIn = (bundle.snippets as Row[] | undefined) ?? [];
   if (snipsIn.length > 0) {
-    await d.db.insert(d.snippets).values(
-      snipsIn.map((s) => ({
-        id: `${String(s.id)}-${rand()}`,
-        connectionId: newId,
-        folderId: null,
-        name: String(s.name),
-        query: String(s.query),
-        createdAt: Number(s.createdAt ?? Date.now()),
-        isShared: false,
-        sharedEntryId: null,
-      })),
+    await tryInsert("snippets", () =>
+      d.db.insert(d.snippets).values(
+        snipsIn.map((s) => ({
+          id: `${String(s.id)}-${rand()}`,
+          connectionId: newId,
+          folderId: null,
+          name: String(s.name),
+          query: String(s.query),
+          createdAt: Number(s.createdAt ?? Date.now()),
+          isShared: false,
+          sharedEntryId: null,
+        })),
+      ),
     );
   }
 
@@ -224,30 +244,34 @@ export async function importBase(
   const chatIdMap = new Map<string, string>();
   for (const c of chatsIn) chatIdMap.set(String(c.id), `${String(c.id)}-${rand()}`);
   if (chatsIn.length > 0) {
-    await d.db.insert(d.aiChats).values(
-      chatsIn.map((c) => ({
-        id: chatIdMap.get(String(c.id))!,
-        connectionId: newId,
-        userId: null,
-        title: String(c.title ?? "Imported chat"),
-        createdAt: Number(c.createdAt ?? Date.now()),
-        updatedAt: Number(c.updatedAt ?? Date.now()),
-      })),
+    await tryInsert("aiChats", () =>
+      d.db.insert(d.aiChats).values(
+        chatsIn.map((c) => ({
+          id: chatIdMap.get(String(c.id))!,
+          connectionId: newId,
+          userId: null,
+          title: String(c.title ?? "Imported chat"),
+          createdAt: Number(c.createdAt ?? Date.now()),
+          updatedAt: Number(c.updatedAt ?? Date.now()),
+        })),
+      ),
     );
   }
   const msgsIn = (bundle.aiChatMessages as Row[] | undefined) ?? [];
   if (msgsIn.length > 0) {
-    await d.db.insert(d.aiChatMessages).values(
-      msgsIn
-        .filter((m) => chatIdMap.has(String(m.chatId)))
-        .map((m) => ({
-          id: `${String(m.id)}-${rand()}`,
-          chatId: chatIdMap.get(String(m.chatId))!,
-          role: (m.role as "user" | "assistant" | "system" | "tool") ?? "user",
-          content: String(m.content ?? ""),
-          metaJson: (m.metaJson as string) ?? null,
-          timestamp: Number(m.timestamp ?? Date.now()),
-        })),
+    await tryInsert("aiChatMessages", () =>
+      d.db.insert(d.aiChatMessages).values(
+        msgsIn
+          .filter((m) => chatIdMap.has(String(m.chatId)))
+          .map((m) => ({
+            id: `${String(m.id)}-${rand()}`,
+            chatId: chatIdMap.get(String(m.chatId))!,
+            role: (m.role as "user" | "assistant" | "system" | "tool") ?? "user",
+            content: String(m.content ?? ""),
+            metaJson: (m.metaJson as string) ?? null,
+            timestamp: Number(m.timestamp ?? Date.now()),
+          })),
+      ),
     );
   }
 
@@ -264,11 +288,13 @@ export async function importBase(
   }
   const searchableIn = (bundle.searchableColumns as Row[] | undefined) ?? [];
   if (searchableIn.length > 0) {
-    await d.db.insert(d.searchableColumns).values(
-      searchableIn.map((s: Row) => {
-        const { id: _i, ...rest } = s;
-        return rest as any;
-      }),
+    await tryInsert("searchableColumns", () =>
+      d.db.insert(d.searchableColumns).values(
+        searchableIn.map((s: Row) => {
+          const { id: _i, ...rest } = s;
+          return rest as any;
+        }),
+      ),
     );
   }
 

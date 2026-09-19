@@ -2976,8 +2976,12 @@ export function ConnectionManager({
         toast.error(bundle.error || "Export failed");
         return;
       }
-      // Merge the browser-local focus selection (schema diagram) into the bundle.
-      const key = focusKeyFor(conn.connectionString);
+      // Merge the browser-local focus selection (schema diagram) into the
+      // bundle. Hash the SERVER-provided connection string — the client row
+      // can be credential-masked in workspace mode, which would change the
+      // hash and silently drop the focus payload.
+      const fullCs = String(bundle.data?.connection?.connectionString || conn.connectionString || "");
+      const key = focusKeyFor(fullCs);
       const focus = typeof window !== "undefined" ? window.localStorage.getItem(`rexa-schema-focus:${key}`) : null;
       bundle.data.focus = { hashKey: key, value: focus };
       const blob = new Blob([JSON.stringify(bundle.data, null, 2)], { type: "application/json" });
