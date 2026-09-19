@@ -15,15 +15,21 @@ import {
   type ExplorerRelation,
 } from "@/lib/api/actions-client";
 import { cn } from "@/lib/utils";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import {
   ChevronRight,
+  Copy,
+  Check,
   Database,
   KeyRound,
   Link2,
+  Maximize2,
   Table2,
   AlertTriangle,
   Loader2,
   Users,
+  WrapText,
 } from "lucide-react";
 
 export type EntityRef = {
@@ -48,6 +54,108 @@ function formatValue(raw: unknown): string {
 
 function isByteaLike(value: unknown, type: string | null | undefined): boolean {
   return BufferLikeCheck(value) || String(type || "").toLowerCase() === "bytea";
+}
+
+/** Try to pretty-print a value as JSON — objects, arrays, or JSON stored in
+ * text columns. Returns null when the value is not JSON-parseable. */
+function tryPrettyJson(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+const VALUE_EXPAND_THRESHOLD = 80;
+
+/** Full-value viewer for long cell values (JSON blobs etc.): pretty-print,
+ * copy, and wrap toggle. */
+function ValueDetailDialog({
+  open,
+  onOpenChange,
+  title,
+  type,
+  raw,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  type?: string | null;
+  raw: unknown;
+}) {
+  const full = useMemo(() => {
+    if (raw === null || raw === undefined) return "∅";
+    if (typeof raw === "object") {
+      try {
+        return JSON.stringify(raw, null, 2);
+      } catch {
+        return String(raw);
+      }
+    }
+    return String(raw);
+  }, [raw]);
+
+  const pretty = useMemo(() => tryPrettyJson(full), [full]);
+  const [prettyMode, setPrettyMode] = useState(false);
+  const [wrap, setWrap] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const effective = prettyMode && pretty ? pretty : full;
+
+  // Reset transient state when a different value is opened.
+  useEffect(() => {
+    if (open) {
+      setPrettyMode(Boolean(pretty));
+      setCopied(false);
+    }
+  }, [open, pretty]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] w-[min(720px,90vw)] flex-col gap-0 p-0">
+        <DialogHeader className="flex-row items-center gap-2 border-b border-border px-4 py-3">
+          <DialogTitle className="font-mono text-sm">{title}</DialogTitle>
+          {type && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{type}</span>}
+          <span className="ml-auto text-[10px] text-muted-foreground">{effective.length.toLocaleString()} chars</span>
+        </DialogHeader>
+        <div className="flex items-center gap-1.5 border-b border-border px-4 py-2">
+          {pretty && (
+            <Button variant={prettyMode ? "secondary" : "outline"} size="sm" className="h-7 text-xs" onClick={() => setPrettyMode((v) => !v)}>
+              {prettyMode ? "Formatted" : "Pretty"}
+            </Button>
+          )}
+          <Button variant={wrap ? "secondary" : "outline"} size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setWrap((v) => !v)}>
+            <WrapText className="size-3" />
+            Wrap
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto h-7 gap-1.5 text-xs"
+            onClick={() => {
+              void navigator.clipboard.writeText(effective).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+          >
+            {copied ? <Check className="size-3 text-green-500" /> : <Copy className="size-3" />}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+        <pre
+          className={cn(
+            "min-h-0 flex-1 overflow-auto bg-muted/30 p-4 font-mono text-xs leading-relaxed",
+            wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre",
+          )}
+        >
+          {effective}
+        </pre>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function BufferLikeCheck(value: unknown): boolean {
@@ -81,9 +189,10 @@ type RelatedSectionProps = {
   overview: OverviewWithPk;
   sectionIndex: number;
   onDrill: (ref: EntityRef) => void;
+  onViewValue?: (column: string, type: string | null, value: unknown) => void;
 };
 
-function RelatedSection({ connectionString, overview, sectionIndex, onDrill }: RelatedSectionProps) {
+function RelatedSection({ connectionString, overview, sectionIndex, onDrill, onViewValue }: RelatedSectionProps) {
   const section = overview.incoming[sectionIndex];
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -211,6 +320,19 @@ function RelatedSection({ connectionString, overview, sectionIndex, onDrill }: R
                         {columns.map((c) => (
                           <td key={c.name} className="max-w-64 truncate px-3 py-1.5 tabular-nums" title={formatValue(row[c.name])}>
                             {formatValue(row[c.name])}
+                            {formatValue(row[c.name]).length > VALUE_EXPAND_THRESHOLD && onViewValue && (
+                              <button
+                                type="button"
+                                className="ml-1 inline-flex translate-y-0.5 items-center rounded p-0.5 text-muted-foreground opacity-60 transition-opacity hover:bg-muted hover:opacity-100"
+                                title="View full value"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onViewValue(c.name, c.type, row[c.name]);
+                                }}
+                              >
+                                <Maximize2 className="size-3" />
+                              </button>
+                            )}
                           </td>
                         ))}
                       </tr>
@@ -253,6 +375,7 @@ export function EntityPage({ connectionString, entity, onDrill }: EntityPageProp
   const [overview, setOverview] = useState<OverviewWithPk | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [valueDetail, setValueDetail] = useState<{ column: string; type: string | null; value: unknown } | null>(null);
 
   const entityKey = useMemo(() => pkSignature(entity), [entity]);
 
@@ -370,6 +493,18 @@ export function EntityPage({ connectionString, entity, onDrill }: EntityPageProp
                 {overview.row && isByteaLike(overview.row[col.name], col.type) && (
                   <span className="ml-1 rounded bg-muted px-1 text-[10px] text-muted-foreground">hex</span>
                 )}
+                {overview.row && formatValue(overview.row[col.name]).length > VALUE_EXPAND_THRESHOLD && (
+                  <button
+                    type="button"
+                    className="ml-1 inline-flex translate-y-0.5 items-center rounded p-0.5 text-muted-foreground opacity-60 transition-opacity hover:bg-muted hover:opacity-100"
+                    title="View full value"
+                    onClick={() =>
+                      setValueDetail({ column: col.name, type: col.type, value: overview.row?.[col.name] })
+                    }
+                  >
+                    <Maximize2 className="size-3" />
+                  </button>
+                )}
               </span>
             </div>
           ))}
@@ -396,9 +531,20 @@ export function EntityPage({ connectionString, entity, onDrill }: EntityPageProp
             overview={overview}
             sectionIndex={i}
             onDrill={onDrill}
+            onViewValue={(column, type, value) => setValueDetail({ column, type, value })}
           />
         ))}
       </div>
+
+      <ValueDetailDialog
+        open={valueDetail !== null}
+        onOpenChange={(o) => {
+          if (!o) setValueDetail(null);
+        }}
+        title={valueDetail ? `${entity.table}.${valueDetail.column}` : ""}
+        type={valueDetail?.type}
+        raw={valueDetail?.value}
+      />
     </div>
   );
 }
