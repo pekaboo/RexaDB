@@ -3105,6 +3105,19 @@ function startServer(port: number, maxPort: number = 3900) {
   const server = app.listen(port, "127.0.0.1", () => {
     log(`[rexadb-server] listening on port ${port}`);
     logToFile(`listening on port ${port}`);
+    // One-time migration: rewrite relation metadata keyed by raw connection
+    // URLs to stable per-database identity keys (background, non-blocking).
+    setTimeout(async () => {
+      try {
+        const { migrateVirtualRelationKeysToIdentity } = await import("../lib/db/relations");
+        const { migrated, skipped } = await migrateVirtualRelationKeysToIdentity();
+        if (migrated > 0 || skipped > 0) {
+          logToFile(`[relations-identity] migrated=${migrated} skipped=${skipped}`);
+        }
+      } catch (e: any) {
+        logToFile(`[relations-identity] migration failed: ${e?.message || e}`);
+      }
+    }, 3_000);
     // Warm provider cache in background so first /api/agents/detect is instant (t3 pattern)
     setTimeout(() => {
       void refreshProvidersCacheInBackground().catch(() => {});

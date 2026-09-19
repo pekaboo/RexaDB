@@ -110,6 +110,56 @@ async function requireConnectionString(connectionString: string): Promise<string
   return cs;
 }
 
+// ─── Stable connection identity ─────────────────────────────────────────
+
+/**
+ * Virtual relations are semantic metadata about a DATABASE, not about a
+ * particular connection entry. The same database is reachable under
+ * different hosts/ports/params (tunnel vs direct, keychain password vs
+ * URL password), so keying metadata by the raw connection string makes
+ * it vanish whenever the connection entry changes. PostgreSQL exposes a
+ * cluster-stable `system_identifier`; combined with the database name it
+ * identifies the target regardless of how we connected. Falls back to
+ * host:port:db parsing when the identity query cannot run (retried after
+ * 60s in case the database was merely unreachable).
+ */
+const identityCache = new Map<string, { key: string; expiresAt: number }>();
+
+export async function getConnectionIdentity(connectionString: string): Promise<string> {
+  const cs = String(connectionString || "").trim();
+  if (!cs) return "";
+  const hit = identityCache.get(cs);
+  if (hit && (hit.expiresAt === 0 || Date.now() < hit.expiresAt)) return hit.key;
+
+  let key = "";
+  try {
+    const { executeQuery } = await import("./pg-client");
+    const identity = Promise.race([
+      executeQuery(cs, "SELECT current_database() AS db, system_identifier AS sid FROM pg_control_system()", [], { queryId: "relations.identity" }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("identity timeout")), 5_000)),
+    ]) as Promise<{ rows: Array<{ db?: string; sid?: string | bigint }> }>;
+    const { rows } = await identity;
+    const sid = rows?.[0]?.sid;
+    const db = rows?.[0]?.db;
+    if (sid && db) key = `pgsys:${sid}:${db}`;
+  } catch {
+    // fall through to host-based key
+  }
+
+  let expiresAt = 0;
+  if (!key) {
+    try {
+      const u = new URL(cs);
+      key = `pghost:${u.hostname}:${u.port || "5432"}:${u.pathname.replace(/^\//, "")}`;
+    } catch {
+      key = `csraw:${cs}`;
+    }
+    expiresAt = Date.now() + 60_000; // retry the real identity later
+  }
+  identityCache.set(cs, { key, expiresAt });
+  return key;
+}
+
 async function getDeps() {
   const { db } = await import("./index");
   const { virtualRelations } = await import("./schema");
@@ -159,7 +209,8 @@ function toRecord(row: {
 
 export async function listVirtualRelations(connectionString: string): Promise<VirtualRelationRecord[]> {
   const { db, virtualRelations, eq } = await getDeps();
-  const rows = await db.select().from(virtualRelations).where(eq(virtualRelations.connectionString, connectionString));
+  const identity = await getConnectionIdentity(await requireConnectionString(connectionString));
+  const rows = await db.select().from(virtualRelations).where(eq(virtualRelations.connectionString, identity));
   return rows.map(toRecord).sort((a, b) =>
     `${a.source.schema}.${a.source.table}`.localeCompare(`${b.source.schema}.${b.source.table}`));
 }
@@ -181,10 +232,11 @@ export async function upsertVirtualRelation(
   }
 
   const { db, virtualRelations, eq, and } = await getDeps();
+  const identity = await getConnectionIdentity(await requireConnectionString(connectionString));
   const now = Date.now();
   const origin: "manual" | "inferred" = input.origin === "inferred" ? "inferred" : "manual";
   const values = {
-    connectionString,
+    connectionString: identity,
     sourceSchema: input.sourceSchema,
     sourceTable: input.sourceTable,
     sourceColumns: JSON.stringify(srcCols),
@@ -200,7 +252,7 @@ export async function upsertVirtualRelation(
     .select()
     .from(virtualRelations)
     .where(and(
-      eq(virtualRelations.connectionString, connectionString),
+      eq(virtualRelations.connectionString, identity),
       eq(virtualRelations.sourceSchema, input.sourceSchema),
       eq(virtualRelations.sourceTable, input.sourceTable),
       eq(virtualRelations.sourceColumns, JSON.stringify(srcCols)),
@@ -229,11 +281,49 @@ export async function upsertVirtualRelation(
 
 export async function deleteVirtualRelation(connectionString: string, id: number): Promise<{ success: boolean; error?: string }> {
   const { db, virtualRelations, eq, and } = await getDeps();
+  const identity = await getConnectionIdentity(await requireConnectionString(connectionString));
   await db.delete(virtualRelations).where(and(
-    eq(virtualRelations.connectionString, connectionString),
+    eq(virtualRelations.connectionString, identity),
     eq(virtualRelations.id, id),
   ));
   return { success: true };
+}
+
+/**
+ * One-time migration: rows written before identity keying landed are
+ * keyed by raw connection URLs. Rewrite them to identity keys so they
+ * surface under every connection entry that reaches the same database.
+ * Unreachable databases are skipped and retried on the next boot.
+ */
+export async function migrateVirtualRelationKeysToIdentity(): Promise<{ migrated: number; skipped: number }> {
+  const { db, virtualRelations, eq } = await getDeps();
+  const rows = await db.selectDistinct({ cs: virtualRelations.connectionString }).from(virtualRelations);
+  let migrated = 0;
+  let skipped = 0;
+  for (const { cs } of rows) {
+    if (cs.startsWith("pgsys:") || cs.startsWith("pghost:") || cs.startsWith("csraw:")) continue;
+    let identity: string;
+    try {
+      identity = await getConnectionIdentity(cs);
+    } catch {
+      skipped++;
+      continue;
+    }
+    if (!identity || identity === cs || identity.startsWith("csraw:")) {
+      skipped++;
+      continue;
+    }
+    try {
+      await db.update(virtualRelations).set({ connectionString: identity }).where(eq(virtualRelations.connectionString, cs));
+      migrated++;
+    } catch {
+      // Unique-index collision: the same relation already exists under the
+      // identity key — the raw-keyed duplicate loses.
+      await db.delete(virtualRelations).where(eq(virtualRelations.connectionString, cs));
+      migrated++;
+    }
+  }
+  return { migrated, skipped };
 }
 
 // ─── Union layer ────────────────────────────────────────────────────────

@@ -185,7 +185,9 @@ async function getSearchableDeps() {
 
 export async function getSearchableColumnConfig(connectionString: string): Promise<{ rows: Array<{ schema: string; table: string; column: string; enabled: boolean }> }> {
   const { db, searchableColumns, eq } = await getSearchableDeps();
-  const rows = await db.select().from(searchableColumns).where(eq(searchableColumns.connectionString, connectionString));
+  const { getConnectionIdentity } = await import("./relations");
+  const identity = await getConnectionIdentity(connectionString);
+  const rows = await db.select().from(searchableColumns).where(eq(searchableColumns.connectionString, identity));
   return {
     rows: rows.map((r: any) => ({
       schema: r.schemaName,
@@ -201,12 +203,14 @@ export async function saveSearchableColumnConfig(
   entries: Array<{ schema: string; table: string; column: string; enabled: boolean }>,
 ): Promise<{ success: boolean; error?: string }> {
   const { db, searchableColumns, eq } = await getSearchableDeps();
-  await db.delete(searchableColumns).where(eq(searchableColumns.connectionString, connectionString));
+  const { getConnectionIdentity } = await import("./relations");
+  const identity = await getConnectionIdentity(connectionString);
+  await db.delete(searchableColumns).where(eq(searchableColumns.connectionString, identity));
   const valid = (entries || []).filter((e) => e && e.schema && e.table && e.column);
   if (valid.length > 0) {
     await db.insert(searchableColumns).values(
       valid.map((e) => ({
-        connectionString,
+        connectionString: identity,
         schemaName: e.schema,
         tableName: e.table,
         columnName: e.column,
