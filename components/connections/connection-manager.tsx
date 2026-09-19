@@ -86,6 +86,7 @@ import {
   SlidersHorizontal,
   Settings,
   Download,
+  Upload,
   CheckCircle2,
   Loader2,
   Globe,
@@ -2955,6 +2956,71 @@ export function ConnectionManager({
     setCredentialsDialog({ open: true, conn, data: creds, loading: false });
   };
 
+  // ── Base export / import ──────────────────────────────────────────
+
+  const focusKeyFor = (cs: string) => {
+    let h = 5381;
+    for (let i = 0; i < cs.length; i++) h = ((h << 5) + h + cs.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  };
+
+  const handleExportBase = async (conn: Connection) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/base/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId: conn.id }),
+      });
+      const bundle = await res.json();
+      if (!bundle.success) {
+        toast.error(bundle.error || "Export failed");
+        return;
+      }
+      // Merge the browser-local focus selection (schema diagram) into the bundle.
+      const key = focusKeyFor(conn.connectionString);
+      const focus = typeof window !== "undefined" ? window.localStorage.getItem(`rexa-schema-focus:${key}`) : null;
+      bundle.data.focus = { hashKey: key, value: focus };
+      const blob = new Blob([JSON.stringify(bundle.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `rexadb-base-${String(conn.name || "base").replace(/[^\w.-]+/g, "_")}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Base exported — the file contains database credentials, keep it safe");
+    } catch (e: any) {
+      toast.error(e?.message || "Export failed");
+    }
+  };
+
+  const importBaseInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImportBaseFile = async (file: File | null | undefined) => {
+    if (!file) return;
+    try {
+      const bundle = JSON.parse(await file.text());
+      const focus = bundle?.focus ?? null;
+      const res = await fetch(`${API_BASE}/api/base/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bundle }),
+      });
+      const out = await res.json();
+      if (!out.success) {
+        toast.error(out.error || "Import failed");
+        return;
+      }
+      // Restore the schema-diagram focus selection under the new key.
+      if (focus?.hashKey && focus.value && out.data?.connectionString && typeof window !== "undefined") {
+        window.localStorage.setItem(`rexa-schema-focus:${focusKeyFor(out.data.connectionString)}`, focus.value);
+      }
+      toast.success(`Imported “${bundle?.connection?.name ?? "base"}” with all its metadata`);
+      await loadConnections();
+    } catch (e: any) {
+      toast.error(e?.message || "Import failed");
+    }
+  };
+
   const openConnectionFailureDialog = useCallback(
     (params: {
       title?: string;
@@ -4668,6 +4734,26 @@ export function ConnectionManager({
                         New Connection
                       </button>
                     )}
+                    {can("connections.create") && (
+                      <button
+                        onClick={() => importBaseInputRef.current?.click()}
+                        className="ml-2 h-9 px-3 rounded-lg border border-border bg-background text-sm flex items-center gap-2 focus:outline-none"
+                        title="Import a previously exported base bundle (.json)"
+                      >
+                        <Upload className="w-4 h-4 text-muted-foreground/70" />
+                        Import Base
+                      </button>
+                    )}
+                    <input
+                      ref={importBaseInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={(e) => {
+                        void handleImportBaseFile(e.target.files?.[0]);
+                        e.target.value = "";
+                      }}
+                    />
                   </div>
                 </div>
 
@@ -4900,6 +4986,13 @@ export function ConnectionManager({
                                           >
                                             {" "}
                                             Copy URI
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
+                                            onClick={() => void handleExportBase(conn)}
+                                            className="gap-2 focus:bg-muted/50"
+                                          >
+                                            <Download className="w-3.5 h-3.5 text-muted-foreground/70" />
+                                            Export Base…
                                           </DropdownMenuItem>
                                           {!workspaceMode && renderFolderSubmenu(conn)}
                                           {workspaceMode && (

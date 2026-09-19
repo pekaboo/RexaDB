@@ -800,6 +800,12 @@ app.post("/api/relations/suggest", dynamicPostRoute("../lib/db/relations", (body
 
 app.post("/api/relations/verify", dynamicPostRoute("../lib/db/relations", (body, m) => m.verifyRelation(body.connectionString, body.relation)));
 
+// Base export / import — one JSON file bundling a connection workspace
+// (credentials, settings, dashboards, tabs, relations, …).
+app.post("/api/base/export", dynamicPostRoute("../lib/db/base-bundle", (body, m) => m.exportBase(body.connectionId)));
+
+app.post("/api/base/import", dynamicPostRoute("../lib/db/base-bundle", (body, m) => m.importBase(body.bundle ?? body)));
+
 // Entity Explorer — entity search / overview / related rows
 app.post("/api/entity/search", dynamicPostRoute("../lib/db/entity-explorer-actions", (body, m) => m.searchEntities(body.connectionString, body.term, { schema: body.schema, table: body.table })));
 
