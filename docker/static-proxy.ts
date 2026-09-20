@@ -4,9 +4,9 @@
  *   GET /api/**  → proxied to the Express sidecar (127.0.0.1:REXADB_SERVER_PORT)
  *   everything else → static files from the Next.js export (./out)
  *
- * The browser sets `window.__REXADB_API_BASE__ = ""` via a runtime script
- * injected at container start, so apiFetch() issues same-origin /api calls
- * that this gateway forwards. Run: bun run docker/static-proxy.ts
+ * The browser sets `window.__REXADB_API_BASE__ = window.location.origin` via
+ * a runtime script injected at container start, so apiFetch() issues
+ * same-origin /api calls that this gateway forwards. Run: bun run docker/static-proxy.ts
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";

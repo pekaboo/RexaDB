@@ -3,9 +3,11 @@ set -e
 
 # Inject the runtime API base override into every exported HTML page so the
 # browser issues same-origin /api calls (the gateway proxies them to the
-# sidecar). With trailingSlash:true every route has its own index.html.
+# sidecar). window.location.origin keeps it absolute — new URL(path, base)
+# in actions-client requires an absolute base, and it adapts to whatever
+# host/port the user opened the app on.
 if [ ! -f /app/out/runtime-api.js ]; then
-  echo 'window.__REXADB_API_BASE__="";' > /app/out/runtime-api.js
+  echo 'window.__REXADB_API_BASE__=window.location.origin;' > /app/out/runtime-api.js
   find /app/out -name index.html -type f | while read -r html; do
     grep -q runtime-api.js "$html" || sed -i 's|</head>|<script src="/runtime-api.js"></script></head>|' "$html"
   done
