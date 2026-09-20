@@ -241,10 +241,16 @@ function SuggestionRow({
   connectionString,
   suggestion,
   onHandled,
+  onAccepted,
+  checked,
+  onToggleCheck,
 }: {
   connectionString: string;
   suggestion: RelationSuggestion;
   onHandled: () => void;
+  onAccepted?: () => void;
+  checked: boolean;
+  onToggleCheck: () => void;
 }) {
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ sampled: number; orphans: number; orphanRate: number } | null>(null);
@@ -265,6 +271,7 @@ function SuggestionRow({
       if (res.success) {
         toast.success(`Accepted ${suggestion.source.table}.${suggestion.source.column} → ${suggestion.target.table}.${suggestion.target.column}`);
         onHandled();
+        onAccepted?.();
       } else {
         toast.error(res.error || "Failed to accept");
       }
@@ -295,8 +302,15 @@ function SuggestionRow({
   };
 
   return (
-    <div className="rounded-lg border border-border bg-card p-2.5">
+    <div className={cn("rounded-lg border border-border bg-card p-2.5", checked && "border-amber-500/50 bg-amber-500/5")}>
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <input
+          type="checkbox"
+          className="size-3.5 shrink-0 accent-amber-500"
+          checked={checked}
+          onChange={onToggleCheck}
+          title="Select for bulk accept"
+        />
         <Sparkles className="size-3.5 text-amber-500" />
         <span className="font-mono">
           {suggestion.source.schema}.{suggestion.source.table}
@@ -341,6 +355,8 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
   const [suggesting, setSuggesting] = useState(false);
   const [filter, setFilter] = useState("");
   const [tableFilter, setTableFilter] = useState("");
+  const [selectedSugs, setSelectedSugs] = useState<Set<RelationSuggestion>>(new Set());
+  const [bulkAccepting, setBulkAccepting] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editorInitial, setEditorInitial] = useState<EditorState | null>(null);
 
@@ -403,6 +419,46 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
     } else {
       toast.error(res.error || "Failed to delete");
     }
+  };
+
+  const toggleSug = (s: RelationSuggestion) => {
+    setSelectedSugs((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+  };
+
+  const acceptSelected = async () => {
+    if (selectedSugs.size === 0 || bulkAccepting) return;
+    const picked = Array.from(selectedSugs);
+    setBulkAccepting(true);
+    let ok = 0;
+    let fail = 0;
+    for (const s of picked) {
+      try {
+        const res = await upsertVirtualRelation(connectionString, {
+          sourceSchema: s.source.schema,
+          sourceTable: s.source.table,
+          sourceColumns: [s.source.column],
+          targetSchema: s.target.schema,
+          targetTable: s.target.table,
+          targetColumns: [s.target.column],
+          origin: "inferred",
+        });
+        if (res.success) ok++;
+        else fail++;
+      } catch {
+        fail++;
+      }
+    }
+    setSuggestions((prev) => prev.filter((x) => !selectedSugs.has(x)));
+    setSelectedSugs(new Set());
+    setBulkAccepting(false);
+    if (fail === 0) toast.success(`Accepted ${ok} relation${ok > 1 ? "s" : ""}`);
+    else toast.warning(`Accepted ${ok}, failed ${fail}`);
+    if (ok > 0) loadAll();
   };
 
   const tableOptions = useMemo(() => {
@@ -528,12 +584,51 @@ export function RelationshipsManager({ connectionString }: { connectionString: s
           <div className="flex items-center gap-2 px-1 text-xs font-medium text-muted-foreground">
             <Sparkles className="size-3.5 text-amber-500" />
             Suggestions ({suggestions.length}) — verify with data, then accept
+            {filteredSuggestions.length > 0 && (
+              <button
+                type="button"
+                className="text-[11px] underline opacity-70 hover:opacity-100"
+                onClick={() =>
+                  setSelectedSugs((prev) => {
+                    const allShown = filteredSuggestions.every((s) => prev.has(s));
+                    const next = new Set(prev);
+                    for (const s of filteredSuggestions) {
+                      if (allShown) next.delete(s);
+                      else next.add(s);
+                    }
+                    return next;
+                  })
+              }
+            >
+              {filteredSuggestions.every((s) => selectedSugs.has(s)) ? "deselect all" : "select all"}
+            </button>
+            )}
+            {selectedSugs.size > 0 && (
+              <span className="ml-auto flex items-center gap-1.5">
+                <span className="normal-case">{selectedSugs.size} selected</span>
+                <Button
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  disabled={bulkAccepting}
+                  onClick={() => void acceptSelected()}
+                >
+                  {bulkAccepting ? <Loader2 className="size-3 animate-spin" /> : <BadgeCheck className="size-3" />}
+                  Accept selected
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" disabled={bulkAccepting} onClick={() => setSelectedSugs(new Set())}>
+                  <X className="size-3" />
+                </Button>
+              </span>
+            )}
           </div>
           {filteredSuggestions.slice(0, 50).map((s) => (
             <SuggestionRow
               key={`${s.source.schema}.${s.source.table}.${s.source.column}-${s.target.schema}.${s.target.table}.${s.target.column}`}
               connectionString={connectionString}
               suggestion={s}
+              checked={selectedSugs.has(s)}
+              onToggleCheck={() => toggleSug(s)}
+              onAccepted={loadAll}
               onHandled={() => setSuggestions((prev) => prev.filter((x) => x !== s))}
             />
           ))}
