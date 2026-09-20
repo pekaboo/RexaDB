@@ -1,6 +1,20 @@
 // API base URL for the sidecar server (used in static export mode)
 // Exported as let so Tauri runtime can update it after port discovery
-export let API_BASE = `http://127.0.0.1:3867`;
+//
+// Runtime override: a page can define `window.__REXADB_API_BASE__` BEFORE this
+// module loads (the Docker gateway injects such a script) to point API calls
+// at another base. The empty string means same-origin — used when a single
+// port serves both the static export and proxies /api to the sidecar.
+declare global {
+  interface Window {
+    __REXADB_API_BASE__?: string;
+  }
+}
+const runtimeBase =
+  typeof window !== "undefined" && typeof window.__REXADB_API_BASE__ === "string"
+    ? window.__REXADB_API_BASE__
+    : null;
+export let API_BASE = runtimeBase !== null ? runtimeBase : `http://127.0.0.1:3867`;
 
 /** Call once at app startup to discover actual sidecar port from Tauri */
 export async function initApiBase(): Promise<void> {

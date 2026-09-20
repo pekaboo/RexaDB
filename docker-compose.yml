@@ -1,0 +1,13 @@
+services:
+  rexadb:
+    build: .
+    image: rexadb:pekaboo-self
+    container_name: rexadb
+    ports:
+      - "7181:7181"
+    volumes:
+      - rexadb-data:/data
+    restart: unless-stopped
+
+volumes:
+  rexadb-data:

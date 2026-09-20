@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.git
+.env.local
+server/sqlite.db
+server/sqlite.db-wal
+server/sqlite.db-shm
+server/chats
+server/keybindings.json
+server/logs
+*.log
+.DS_Store
+tests
+docs
