@@ -68,9 +68,13 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, rawPath: s
 
   try {
     const data = await readFile(file);
+    const isRuntimeConfig = file.endsWith("runtime-api.js");
+    const isHtml = extname(file) === ".html";
     res.writeHead(200, {
       "Content-Type": MIME[extname(file).toLowerCase()] || "application/octet-stream",
-      "Cache-Control": extname(file) === ".html" ? "no-cache" : "public, max-age=3600",
+      // Runtime config must NEVER cache — it carries the API base override
+      // and a stale copy recreates the empty-connections bug after rebuilds.
+      "Cache-Control": isRuntimeConfig || isHtml ? "no-cache, must-revalidate" : "public, max-age=3600",
     });
     res.end(data);
   } catch {
