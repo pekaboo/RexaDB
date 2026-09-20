@@ -134,7 +134,32 @@ async function proxyApi(req: IncomingMessage, res: ServerResponse) {
 
 const server = createServer((req, res) => {
   const p = req.url || "/";
-  if (p === "/api" || p.startsWith("/api/") || p === "/health" || p.startsWith("/health/")) {
+  let pathname = p;
+  try {
+    pathname = new URL(p, "http://x").pathname;
+  } catch {
+    // keep raw
+  }
+
+  // Sidecar routes that do NOT live under /api:
+  //   /health, /mcp, and /studio/:connectionId/<resource> (bootstrap,
+  //   dashboards, tabs, snippets, history, …). Static export pages are
+  //   exactly /studio/<id> (one segment) — API paths always have a second
+  //   segment, so depth decides.
+  const segs = pathname.split("/").filter((s) => s.length > 0);
+  // /studio/<id> (1 non-empty segment after /studio) = pre-rendered page;
+  // /studio/<id>/<resource> (≥2) = sidecar API.
+  const isStudioApi = segs[0] === "studio" && segs.length >= 3;
+  const isSidecar =
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/health" ||
+    pathname.startsWith("/health/") ||
+    pathname === "/mcp" ||
+    pathname.startsWith("/mcp/") ||
+    isStudioApi;
+
+  if (isSidecar) {
     void proxyApi(req, res);
   } else {
     void serveStatic(req, res, p);
